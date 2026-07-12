@@ -93,6 +93,26 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
     else void transport.play(playheadMicros)
   }
 
+  // Space toggles play/pause — a desktop-bonus shortcut (ARCHITECTURE §1).
+  // Reads fresh state via getState() rather than closing over `playheadMicros`
+  // so this listener doesn't need to be torn down and re-added every tick.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code !== 'Space') return
+      const target = e.target
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      e.preventDefault()
+      const transport = transportRef.current
+      if (!transport) return
+      if (transport.isPlaying) transport.pause()
+      else void transport.play(useEditorStore.getState().playheadMicros)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   function toCanvasPoint(clientX: number, clientY: number): Point {
     const canvas = canvasRef.current
     if (!canvas) return { x: 0, y: 0 }

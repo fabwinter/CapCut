@@ -12,7 +12,7 @@ async function createProjectWithClipOnTimeline(page: import('@playwright/test').
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(page).toHaveURL(/\/edit\//)
 
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('[data-media-import-input]').setInputFiles({
     name: 'pixel.png',
     mimeType: 'image/png',
     buffer: Buffer.from(PNG_BASE64, 'base64'),

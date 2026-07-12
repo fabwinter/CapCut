@@ -71,5 +71,6 @@ export function useProjects() {
     renameProject: renameProjectById,
     duplicateProject,
     removeProject,
+    refresh,
   }
 }

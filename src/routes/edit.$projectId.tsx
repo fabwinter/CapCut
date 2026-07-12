@@ -8,9 +8,15 @@ import { Inspector } from '#/components/editor/Inspector'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
 import { Timeline } from '#/components/editor/timeline/Timeline'
+import { deleteClip } from '#/editor/doc/commands/clips'
 import { renameProject } from '#/editor/doc/commands/project'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { loadProject } from '#/storage/idb'
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+}
 
 export const Route = createFileRoute('/edit/$projectId')({ component: Editor })
 
@@ -19,10 +25,53 @@ type LoadState = 'loading' | 'ready' | 'not-found'
 function Editor() {
   const { projectId } = Route.useParams()
   const navigate = useNavigate()
-  const { doc, canUndo, canRedo, isDirty, isSaving, openProject, dispatch, undo, redo, closeProject } =
-    useEditorStore()
+  const {
+    doc,
+    canUndo,
+    canRedo,
+    isDirty,
+    isSaving,
+    selectedClipId,
+    openProject,
+    dispatch,
+    undo,
+    redo,
+    closeProject,
+    selectClip,
+  } = useEditorStore()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [exportOpen, setExportOpen] = useState(false)
+
+  // Desktop bonus (ARCHITECTURE §1: secondary on iPad, but cheap and expected on desktop browsers).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target) || exportOpen) return
+      const meta = e.metaKey || e.ctrlKey
+
+      if (meta && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) redo()
+        else undo()
+        return
+      }
+      if (meta && e.key.toLowerCase() === 'y') {
+        e.preventDefault()
+        redo()
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipId) {
+        e.preventDefault()
+        dispatch(deleteClip(selectedClipId))
+        selectClip(null)
+        return
+      }
+      if (e.key === 'Escape' && selectedClipId) {
+        selectClip(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [undo, redo, dispatch, selectClip, selectedClipId, exportOpen])
 
   useEffect(() => {
     let cancelled = false

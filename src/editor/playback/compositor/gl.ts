@@ -79,25 +79,59 @@ function createProgram(gl: WebGL2RenderingContext): WebGLProgram {
  */
 export class Compositor {
   private readonly gl: WebGL2RenderingContext
-  private readonly program: WebGLProgram
-  private readonly positionBuffer: WebGLBuffer
-  private readonly texcoordBuffer: WebGLBuffer
-  private readonly positionLoc: number
-  private readonly texcoordLoc: number
-  private readonly opacityLoc: WebGLUniformLocation | null
-  private readonly brightnessLoc: WebGLUniformLocation | null
-  private readonly contrastLoc: WebGLUniformLocation | null
-  private readonly saturationLoc: WebGLUniformLocation | null
-  private readonly temperatureLoc: WebGLUniformLocation | null
-  private readonly vignetteLoc: WebGLUniformLocation | null
+  private readonly canvas: HTMLCanvasElement
+  private program!: WebGLProgram
+  private positionBuffer!: WebGLBuffer
+  private texcoordBuffer!: WebGLBuffer
+  private positionLoc!: number
+  private texcoordLoc!: number
+  private opacityLoc!: WebGLUniformLocation | null
+  private brightnessLoc!: WebGLUniformLocation | null
+  private contrastLoc!: WebGLUniformLocation | null
+  private saturationLoc!: WebGLUniformLocation | null
+  private temperatureLoc!: WebGLUniformLocation | null
+  private vignetteLoc!: WebGLUniformLocation | null
   private readonly textures = new Map<string, WebGLTexture>()
   private canvasWidth = 0
   private canvasHeight = 0
+  private contextLost = false
+  private readonly onContextLost: (() => void) | undefined
+  private readonly onContextRestored: (() => void) | undefined
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, callbacks: { onContextLost?: () => void; onContextRestored?: () => void } = {}) {
     const gl = canvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true })
     if (!gl) throw new Error('WebGL2 unavailable')
     this.gl = gl
+    this.canvas = canvas
+    this.onContextLost = callbacks.onContextLost
+    this.onContextRestored = callbacks.onContextRestored
+    this.setupGLResources()
+
+    // iPad backgrounding/memory pressure can invalidate the GL context at any
+    // time (ARCHITECTURE §5) — recreate every GPU resource on restore rather
+    // than leaving the compositor permanently broken. The texture cache is
+    // just cleared, not explicitly deleted: the lost context already
+    // invalidated those handles, so freeing them is a no-op the spec says to
+    // skip.
+    canvas.addEventListener('webglcontextlost', this.handleContextLost)
+    canvas.addEventListener('webglcontextrestored', this.handleContextRestored)
+  }
+
+  private readonly handleContextLost = (event: Event): void => {
+    event.preventDefault()
+    this.contextLost = true
+    this.textures.clear()
+    this.onContextLost?.()
+  }
+
+  private readonly handleContextRestored = (): void => {
+    this.setupGLResources()
+    this.contextLost = false
+    this.onContextRestored?.()
+  }
+
+  private setupGLResources(): void {
+    const gl = this.gl
     this.program = createProgram(gl)
     this.positionLoc = gl.getAttribLocation(this.program, 'a_position')
     this.texcoordLoc = gl.getAttribLocation(this.program, 'a_texcoord')
@@ -121,15 +155,20 @@ export class Compositor {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
+    if (this.canvasWidth > 0 && this.canvasHeight > 0) gl.viewport(0, 0, this.canvasWidth, this.canvasHeight)
+  }
+
+  /** True between a `webglcontextlost` event and the matching `webglcontextrestored`. */
+  isContextLost(): boolean {
+    return this.contextLost
   }
 
   resize(width: number, height: number): void {
     this.canvasWidth = width
     this.canvasHeight = height
-    const canvas = this.gl.canvas
-    canvas.width = width
-    canvas.height = height
-    this.gl.viewport(0, 0, width, height)
+    this.canvas.width = width
+    this.canvas.height = height
+    if (!this.contextLost) this.gl.viewport(0, 0, width, height)
   }
 
   clear(r: number, g: number, b: number, a = 1): void {
@@ -138,11 +177,14 @@ export class Compositor {
     gl.clear(gl.COLOR_BUFFER_BIT)
   }
 
-  private getTexture(slotKey: string): WebGLTexture {
+  private getTexture(slotKey: string): WebGLTexture | undefined {
     let texture = this.textures.get(slotKey)
     if (!texture) {
       const created = this.gl.createTexture()
-      if (!created) throw new Error('Failed to create texture')
+      // Context lost — every GL call is a silent no-op per spec, including
+      // this one returning null instead of throwing. Skip the draw; the
+      // frame after `webglcontextrestored` fixes it, no error to surface.
+      if (!created) return undefined
       texture = created
       this.gl.bindTexture(this.gl.TEXTURE_2D, texture)
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE)
@@ -162,8 +204,10 @@ export class Compositor {
     opacity: number,
     adjustments: Adjustments = NEUTRAL_ADJUSTMENTS,
   ): void {
+    if (this.contextLost) return
     const gl = this.gl
     const texture = this.getTexture(slotKey)
+    if (!texture) return
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
 
@@ -214,6 +258,8 @@ export class Compositor {
   }
 
   destroy(): void {
+    this.canvas.removeEventListener('webglcontextlost', this.handleContextLost)
+    this.canvas.removeEventListener('webglcontextrestored', this.handleContextRestored)
     for (const key of [...this.textures.keys()]) this.releaseSlot(key)
     this.gl.deleteProgram(this.program)
     this.gl.deleteBuffer(this.positionBuffer)
