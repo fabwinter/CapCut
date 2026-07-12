@@ -11,7 +11,7 @@ test.describe('project gallery and editor shell', () => {
     await createDialog.getByRole('button', { name: 'Create', exact: true }).click()
 
     await expect(page).toHaveURL(/\/edit\//)
-    await expect(page.getByText('Timeline — Phase 3 (2 tracks)')).toBeVisible()
+    await expect(page.locator('[data-track-header]')).toHaveCount(2)
 
     await page.getByRole('button', { name: 'My Test Project' }).click()
     const nameInput = page.locator('header input')
