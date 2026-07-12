@@ -3,6 +3,7 @@ import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon } from
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
+import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { renameProject } from '#/editor/doc/commands/project'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { loadProject } from '#/storage/idb'
@@ -97,19 +98,25 @@ function Editor() {
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col">
-        <div className="bg-black/90 flex flex-1 items-center justify-center overflow-hidden">
-          <div
-            className="bg-black flex max-h-full max-w-full items-center justify-center ring-1 ring-white/10"
-            style={{ aspectRatio: `${doc.settings.width} / ${doc.settings.height}`, height: '100%' }}
-          >
-            <span className="text-white/30 text-xs">Preview — Phase 4</span>
-          </div>
-        </div>
+      <main className="flex min-h-0 flex-1">
+        <aside className="border-border w-64 shrink-0 border-r">
+          <MediaLibrary projectId={projectId} />
+        </aside>
 
-        <div className="border-border bg-card/40 h-56 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)]">
-          <div className="text-muted-foreground flex h-full items-center justify-center text-xs">
-            Timeline — Phase 3 ({doc.tracks.length} tracks)
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="bg-black/90 flex flex-1 items-center justify-center overflow-hidden">
+            <div
+              className="bg-black flex max-h-full max-w-full items-center justify-center ring-1 ring-white/10"
+              style={{ aspectRatio: `${doc.settings.width} / ${doc.settings.height}`, height: '100%' }}
+            >
+              <span className="text-white/30 text-xs">Preview — Phase 4</span>
+            </div>
+          </div>
+
+          <div className="border-border bg-card/40 h-56 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)]">
+            <div className="text-muted-foreground flex h-full items-center justify-center text-xs">
+              Timeline — Phase 3 ({doc.tracks.length} tracks)
+            </div>
           </div>
         </div>
       </main>
