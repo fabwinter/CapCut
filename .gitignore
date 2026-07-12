@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.output/
+.vercel/
+.vinxi/
+*.local
+.env
+.env.*
+!.env.example
+routeTree.gen.ts
+playwright-report/
+test-results/
+.DS_Store
+*.log
