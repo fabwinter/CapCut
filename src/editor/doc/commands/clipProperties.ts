@@ -1,3 +1,4 @@
+import { scaleClipLocalTiming } from './clips'
 import type { Clip } from '../schema'
 import type { Command } from './types'
 
@@ -28,8 +29,11 @@ export function setClipSpeed(clipId: string, speed: number): Command {
       const clamped = Math.min(MAX_SPEED, Math.max(MIN_SPEED, speed))
       if (clamped === clip.speed) return
       const sourceSpanMicros = clip.durationMicros * clip.speed
+      const newDuration = Math.max(1, Math.round(sourceSpanMicros / clamped))
+      const scale = newDuration / clip.durationMicros
       clip.speed = clamped
-      clip.durationMicros = Math.max(1, Math.round(sourceSpanMicros / clamped))
+      clip.durationMicros = newDuration
+      scaleClipLocalTiming(clip, scale)
       draft.modifiedAt = Date.now()
     },
   }
