@@ -1,8 +1,35 @@
-import { createDefaultTransform, createId, type Clip } from '../schema'
+import { createDefaultTransform, createId, type Clip, type Keyframe } from '../schema'
 import type { Command } from './types'
 
 /** Floor under which a trim/split can't shrink a clip — half a frame at 60fps. */
 const MIN_CLIP_DURATION_MICROS = 8_333
+
+/**
+ * Keyframes and fade durations are stored relative to the clip's own
+ * timeline (0 = clip start), not the source. Every command that moves the
+ * start, shrinks the duration, or rescales the clip must keep them in sync
+ * — otherwise a keyframe silently drifts to a different visual moment, or a
+ * fade rides past the edge it was anchored to.
+ */
+
+/** Trimming the start moves clip-local zero forward by `deltaMicros` — shift keyframes to match, dropping any now before the new start or past the new end. */
+function shiftKeyframesForStartTrim(keyframes: Keyframe[], deltaMicros: number, newDurationMicros: number): Keyframe[] {
+  return keyframes
+    .map((kf) => ({ ...kf, atMicros: kf.atMicros - deltaMicros }))
+    .filter((kf) => kf.atMicros >= 0 && kf.atMicros <= newDurationMicros)
+}
+
+/** Drops keyframes that now fall past a shortened end. */
+function clampKeyframesToDuration(keyframes: Keyframe[], newDurationMicros: number): Keyframe[] {
+  return keyframes.filter((kf) => kf.atMicros <= newDurationMicros)
+}
+
+/** Speed changes rescale the clip's timeline — keyframes and fades must scale by the same factor to stay at the same proportional (and source-content) position. */
+export function scaleClipLocalTiming(clip: Clip, scale: number): void {
+  clip.keyframes = clip.keyframes.map((kf) => ({ ...kf, atMicros: Math.round(kf.atMicros * scale) }))
+  clip.fadeInMicros = Math.round(clip.fadeInMicros * scale)
+  clip.fadeOutMicros = Math.round(clip.fadeOutMicros * scale)
+}
 
 export interface CreateClipParams {
   trackId: string
@@ -88,9 +115,12 @@ export function trimClipStart(clipId: string, newStartMicros: number): Command {
       if (deltaMicros === 0) return
       const deltaSourceMicros = deltaMicros * clip.speed
       if (clip.inPointMicros + deltaSourceMicros < 0) return
+      const newDuration = endMicros - clampedStart
       clip.startMicros = clampedStart
-      clip.durationMicros = endMicros - clampedStart
+      clip.durationMicros = newDuration
       clip.inPointMicros += deltaSourceMicros
+      clip.keyframes = shiftKeyframesForStartTrim(clip.keyframes, deltaMicros, newDuration)
+      clip.fadeInMicros = Math.max(0, Math.min(clip.fadeInMicros - deltaMicros, newDuration))
       draft.modifiedAt = Date.now()
     },
   }
@@ -108,10 +138,13 @@ export function trimClipEnd(clipId: string, newEndMicros: number): Command {
         Math.round(newEndMicros) - clip.startMicros,
       )
       if (newDuration === clip.durationMicros) return
+      const removedFromEnd = Math.max(0, clip.durationMicros - newDuration)
       clip.durationMicros = newDuration
       if (clip.outPointMicros !== undefined) {
         clip.outPointMicros = clip.inPointMicros + newDuration * clip.speed
       }
+      clip.keyframes = clampKeyframesToDuration(clip.keyframes, newDuration)
+      clip.fadeOutMicros = Math.max(0, Math.min(clip.fadeOutMicros - removedFromEnd, newDuration))
       draft.modifiedAt = Date.now()
     },
   }
@@ -143,6 +176,7 @@ export function splitClip(clipId: string, atMicros: number): Command {
           .filter((kf) => kf.atMicros >= firstDuration)
           .map((kf) => ({ ...kf, id: createId(), atMicros: kf.atMicros - firstDuration })),
         transitionOut: clip.transitionOut,
+        fadeInMicros: 0,
       }
 
       clip.durationMicros = firstDuration
@@ -151,6 +185,7 @@ export function splitClip(clipId: string, atMicros: number): Command {
       }
       clip.keyframes = clip.keyframes.filter((kf) => kf.atMicros < firstDuration)
       clip.transitionOut = undefined
+      clip.fadeOutMicros = 0
 
       const insertAt = track.clips.findIndex((c) => c.id === clipId) + 1
       track.clips.splice(insertAt, 0, secondClip)
