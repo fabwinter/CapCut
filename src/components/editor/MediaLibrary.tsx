@@ -1,12 +1,42 @@
-import { AlertCircleIcon, FilmIcon, ImageIcon, LoaderCircleIcon, Music2Icon, UploadIcon } from 'lucide-react'
+import { AlertCircleIcon, FilmIcon, ImageIcon, LoaderCircleIcon, Music2Icon, PlusIcon, UploadIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
-import type { AssetRef } from '#/editor/doc/schema'
-import { microsToSeconds } from '#/editor/doc/time'
+import { addClip, createClip } from '#/editor/doc/commands/clips'
+import { addTrack } from '#/editor/doc/commands/tracks'
+import type { Command } from '#/editor/doc/commands/types'
+import type { AssetRef, ProjectDoc, TrackKind } from '#/editor/doc/schema'
+import { microsToSeconds, secondsToMicros } from '#/editor/doc/time'
 import { importMediaFile } from '#/editor/media/import'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { readThumbnail } from '#/editor/media/assetStorage'
+
+const DEFAULT_IMAGE_DURATION_MICROS = secondsToMicros(3)
+
+function trackKindForAsset(asset: AssetRef): TrackKind {
+  if (asset.kind === 'audio') return 'audio'
+  if (asset.kind === 'image') return 'overlay'
+  return 'video'
+}
+
+/** Appends an asset to the end of the first matching track, creating one first if none exists. */
+function addAssetToTimeline(doc: ProjectDoc, asset: AssetRef, dispatch: (command: Command) => void) {
+  const kind = trackKindForAsset(asset)
+  const durationMicros = asset.durationMicros ?? DEFAULT_IMAGE_DURATION_MICROS
+
+  let track = doc.tracks.find((t) => t.kind === kind && !t.locked)
+  if (!track) {
+    dispatch(addTrack(kind))
+    // Freshest doc, now holding the track we just created.
+    track = useEditorStore
+      .getState()
+      .doc?.tracks.filter((t) => t.kind === kind)
+      .at(-1)
+    if (!track) return
+  }
+  const startMicros = track.clips.reduce((max, c) => Math.max(max, c.startMicros + c.durationMicros), 0)
+  dispatch(addClip(createClip({ trackId: track.id, assetId: asset.id, startMicros, durationMicros })))
+}
 
 interface MediaLibraryProps {
   projectId: string
@@ -76,6 +106,8 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
 function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) {
   const KindIcon = asset.kind === 'video' ? FilmIcon : asset.kind === 'audio' ? Music2Icon : ImageIcon
   const thumbnailUrl = useAssetThumbnail(projectId, asset)
+  const doc = useEditorStore((s) => s.doc)
+  const dispatch = useEditorStore((s) => s.dispatch)
 
   return (
     <li
@@ -96,6 +128,17 @@ function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) 
           {asset.durationMicros ? `${microsToSeconds(asset.durationMicros).toFixed(1)}s` : asset.kind}
         </p>
       </div>
+      {asset.status === 'ready' && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Add to timeline"
+          data-add-to-timeline
+          onClick={() => doc && addAssetToTimeline(doc, asset, dispatch)}
+        >
+          <PlusIcon className="size-3.5" />
+        </Button>
+      )}
       <StatusIndicator asset={asset} />
     </li>
   )

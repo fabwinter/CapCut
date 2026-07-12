@@ -12,11 +12,16 @@ interface EditorState {
   canRedo: boolean
   isDirty: boolean
   isSaving: boolean
+  /** UI-only state below — never touches the command bus, doc, or undo stack. */
+  selectedClipId: string | null
+  playheadMicros: number
   openProject: (doc: ProjectDoc) => void
   dispatch: (command: Command) => void
   undo: () => void
   redo: () => void
   closeProject: () => void
+  selectClip: (clipId: string | null) => void
+  setPlayhead: (micros: number) => void
 }
 
 // A single editor is open at a time in this SPA, so the bus and its debounce
@@ -24,9 +29,25 @@ interface EditorState {
 let bus: CommandBus | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
-function syncFromBus(set: (partial: Partial<EditorState>) => void, dirty: boolean) {
+function syncFromBus(
+  get: () => EditorState,
+  set: (partial: Partial<EditorState>) => void,
+  dirty: boolean,
+) {
   if (!bus) return
-  set({ doc: bus.getDoc(), canUndo: bus.canUndo(), canRedo: bus.canRedo(), isDirty: dirty })
+  const doc = bus.getDoc()
+  const selectedClipId = get().selectedClipId
+  // Undo/redo/edits can remove the selected clip out from under the UI — drop
+  // a stale selection rather than let the inspector point at nothing.
+  const stillExists =
+    selectedClipId !== null && doc.tracks.some((t) => t.clips.some((c) => c.id === selectedClipId))
+  set({
+    doc,
+    canUndo: bus.canUndo(),
+    canRedo: bus.canRedo(),
+    isDirty: dirty,
+    selectedClipId: stillExists ? selectedClipId : null,
+  })
 }
 
 /**
@@ -64,33 +85,54 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   canRedo: false,
   isDirty: false,
   isSaving: false,
+  selectedClipId: null,
+  playheadMicros: 0,
 
   openProject: (doc) => {
     bus = new CommandBus(doc)
-    set({ doc, canUndo: false, canRedo: false, isDirty: false, isSaving: false })
+    set({
+      doc,
+      canUndo: false,
+      canRedo: false,
+      isDirty: false,
+      isSaving: false,
+      selectedClipId: null,
+      playheadMicros: 0,
+    })
   },
 
   dispatch: (command) => {
     bus?.dispatch(command)
-    syncFromBus(set, true)
+    syncFromBus(get, set, true)
     scheduleAutosave(get, set)
   },
 
   undo: () => {
     bus?.undo()
-    syncFromBus(set, true)
+    syncFromBus(get, set, true)
     scheduleAutosave(get, set)
   },
 
   redo: () => {
     bus?.redo()
-    syncFromBus(set, true)
+    syncFromBus(get, set, true)
     scheduleAutosave(get, set)
   },
 
   closeProject: () => {
     if (get().isDirty) flushAutosave(get, set)
     bus = null
-    set({ doc: null, canUndo: false, canRedo: false, isDirty: false, isSaving: false })
+    set({
+      doc: null,
+      canUndo: false,
+      canRedo: false,
+      isDirty: false,
+      isSaving: false,
+      selectedClipId: null,
+      playheadMicros: 0,
+    })
   },
+
+  selectClip: (clipId) => set({ selectedClipId: clipId }),
+  setPlayhead: (micros) => set({ playheadMicros: Math.max(0, Math.round(micros)) }),
 }))

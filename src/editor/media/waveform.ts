@@ -5,7 +5,7 @@
  * off the worker used for proxy/thumbnail generation. decodeAudioData itself
  * decodes off the JS main thread internally, so this doesn't block the UI.
  */
-const DEFAULT_BUCKETS_PER_SECOND = 50
+export const DEFAULT_BUCKETS_PER_SECOND = 50
 
 export interface WaveformResult {
   peaks: Float32Array
