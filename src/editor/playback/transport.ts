@@ -1,11 +1,16 @@
 import { findActiveClips } from '#/editor/doc/selectors/activeClips'
+import { evaluateKeyframedValue } from '#/editor/doc/selectors/keyframes'
+import { findAdjacentNextClip } from '#/editor/doc/selectors/transitions'
 import { projectDurationMicros, type ProjectDoc, type Transform } from '#/editor/doc/schema'
 import type { Micros } from '#/editor/doc/time'
 import { readOriginal, readProxy } from '#/editor/media/assetStorage'
+import { computeGainEnvelope } from './audioEnvelope'
+import { computeAdjustments, NEUTRAL_ADJUSTMENTS } from './compositor/adjustments'
 import { Compositor } from './compositor/gl'
 import { computeTextAnimationModifier } from './compositor/textAnimation'
 import { rasterizeText } from './compositor/textRasterizer'
 import { computeQuadCorners } from './compositor/transform2d'
+import { computeTransitionBlend } from './compositor/transitionBlend'
 import { FrameSourceManager } from './frameSource'
 
 function hexToRgb01(hex: string): [number, number, number] {
@@ -97,6 +102,31 @@ export class Transport {
    * themselves — this only guards against out-of-order completion clobbering
    * a newer frame with an older one.
    */
+  /** Resolves a clip's texture source at a given source-local time; pushes any decoded VideoFrame onto `framesToClose`. */
+  private async resolveClipSource(
+    doc: ProjectDoc,
+    clip: import('#/editor/doc/schema').Clip,
+    localMicros: Micros,
+    framesToClose: VideoFrame[],
+  ): Promise<{ source: TexImageSource; width: number; height: number } | undefined> {
+    if (!clip.assetId) return undefined
+    const asset = doc.assets.find((a) => a.id === clip.assetId)
+    if (!asset || asset.status !== 'ready') return undefined
+
+    if (asset.kind === 'image') {
+      const bitmap = await this.getImageBitmap(asset.id)
+      return { source: bitmap, width: bitmap.width, height: bitmap.height }
+    }
+    if (asset.kind === 'video' && asset.proxy) {
+      const file = await this.getProxyFile(asset.id)
+      const frame = await this.frameSources.getFrame(asset.id, file, localMicros)
+      if (!frame) return undefined
+      framesToClose.push(frame)
+      return { source: frame, width: frame.codedWidth, height: frame.codedHeight }
+    }
+    return undefined
+  }
+
   async renderFrameAt(atMicros: Micros): Promise<void> {
     const generation = ++this.renderGeneration
     const doc = this.getDoc()
@@ -105,14 +135,31 @@ export class Transport {
 
     const active = findActiveClips(doc, atMicros)
     const framesToClose: VideoFrame[] = []
-    const draws: { slotKey: string; source: TexImageSource; quad: ReturnType<typeof computeQuadCorners>; opacity: number }[] =
-      []
+    const draws: {
+      slotKey: string
+      source: TexImageSource
+      quad: ReturnType<typeof computeQuadCorners>
+      opacity: number
+      adjustments: ReturnType<typeof computeAdjustments>
+      scissor?: { x: number; y: number; width: number; height: number }
+    }[] = []
 
     for (const { clip, track, clipLocalMicros, localMicros } of active) {
       if (track.kind === 'audio') continue
       try {
+        const keyframedTransform: Transform =
+          clip.keyframes.length === 0
+            ? clip.transform
+            : {
+                x: evaluateKeyframedValue(clip.keyframes, 'x', clipLocalMicros, clip.transform.x),
+                y: evaluateKeyframedValue(clip.keyframes, 'y', clipLocalMicros, clip.transform.y),
+                scale: evaluateKeyframedValue(clip.keyframes, 'scale', clipLocalMicros, clip.transform.scale),
+                rotation: evaluateKeyframedValue(clip.keyframes, 'rotation', clipLocalMicros, clip.transform.rotation),
+                opacity: evaluateKeyframedValue(clip.keyframes, 'opacity', clipLocalMicros, clip.transform.opacity),
+              }
         const override = this.transformOverrides.get(clip.id)
-        const transform = override ? { ...clip.transform, ...override } : clip.transform
+        const transform = override ? { ...keyframedTransform, ...override } : keyframedTransform
+        const adjustments = computeAdjustments(clip.effects)
 
         if (clip.text) {
           const raster = rasterizeText(clip.text, doc.settings.width, doc.settings.height)
@@ -130,29 +177,68 @@ export class Transport {
             doc.settings.width,
             doc.settings.height,
           )
-          draws.push({ slotKey: clip.id, source: raster, quad, opacity: transform.opacity * mod.opacityMul })
-          continue
-        }
-        if (!clip.assetId) continue
-        const asset = doc.assets.find((a) => a.id === clip.assetId)
-        if (!asset || asset.status !== 'ready') continue
-
-        if (asset.kind === 'image') {
-          const bitmap = await this.getImageBitmap(asset.id)
+          draws.push({ slotKey: clip.id, source: raster, quad, opacity: transform.opacity * mod.opacityMul, adjustments })
+        } else {
+          const resolved = await this.resolveClipSource(doc, clip, localMicros, framesToClose)
           if (generation !== this.renderGeneration) return
-          const quad = computeQuadCorners(transform, bitmap.width, bitmap.height, doc.settings.width, doc.settings.height)
-          draws.push({ slotKey: clip.id, source: bitmap, quad, opacity: transform.opacity })
-        } else if (asset.kind === 'video' && asset.proxy) {
-          const file = await this.getProxyFile(asset.id)
-          const frame = await this.frameSources.getFrame(asset.id, file, localMicros)
-          if (generation !== this.renderGeneration) {
-            frame?.close()
-            return
+          if (resolved) {
+            const quad = computeQuadCorners(transform, resolved.width, resolved.height, doc.settings.width, doc.settings.height)
+            draws.push({ slotKey: clip.id, source: resolved.source, quad, opacity: transform.opacity, adjustments })
           }
-          if (!frame) continue
-          framesToClose.push(frame)
-          const quad = computeQuadCorners(transform, frame.codedWidth, frame.codedHeight, doc.settings.width, doc.settings.height)
-          draws.push({ slotKey: clip.id, source: frame, quad, opacity: transform.opacity })
+        }
+
+        // Transition into the next clip on this track — see transitionBlend.ts for the hold-frame model.
+        if (clip.transitionOut) {
+          const transitionEnd = clip.startMicros + clip.durationMicros
+          const transitionStart = transitionEnd - clip.transitionOut.durationMicros
+          if (atMicros >= transitionStart) {
+            const next = findAdjacentNextClip(doc, clip)
+            if (next) {
+              const progress =
+                clip.transitionOut.durationMicros <= 0 ? 1 : (atMicros - transitionStart) / clip.transitionOut.durationMicros
+              const blend = computeTransitionBlend(clip.transitionOut.type, progress, doc.settings.width, doc.settings.height)
+              const lastDraw = draws.at(-1)
+              if (lastDraw && lastDraw.slotKey === clip.id) lastDraw.opacity *= blend.opacityA
+
+              if (blend.blackOverlayOpacity > 0) {
+                draws.push({
+                  slotKey: '__transition_black',
+                  source: this.getBlackSource(),
+                  quad: computeQuadCorners(
+                    { x: 0, y: 0, scale: 1, rotation: 0 },
+                    doc.settings.width,
+                    doc.settings.height,
+                    doc.settings.width,
+                    doc.settings.height,
+                  ),
+                  opacity: blend.blackOverlayOpacity,
+                  adjustments: NEUTRAL_ADJUSTMENTS,
+                })
+              }
+
+              const nextResolved = next.text
+                ? { source: rasterizeText(next.text, doc.settings.width, doc.settings.height), width: doc.settings.width, height: doc.settings.height }
+                : await this.resolveClipSource(doc, next, next.inPointMicros, framesToClose)
+              if (generation !== this.renderGeneration) return
+              if (nextResolved) {
+                const nextQuad = computeQuadCorners(
+                  next.transform,
+                  nextResolved.width,
+                  nextResolved.height,
+                  doc.settings.width,
+                  doc.settings.height,
+                ).map((p) => ({ x: p.x + blend.xOffsetB, y: p.y })) as ReturnType<typeof computeQuadCorners>
+                draws.push({
+                  slotKey: `${next.id}:transition-in`,
+                  source: nextResolved.source,
+                  quad: nextQuad,
+                  opacity: next.transform.opacity * blend.opacityB,
+                  adjustments: computeAdjustments(next.effects),
+                  scissor: blend.scissorB,
+                })
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to render clip', clip.id, err)
@@ -165,8 +251,23 @@ export class Transport {
     }
 
     this.compositor.clear(r, g, b, 1)
-    for (const draw of draws) this.compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity)
+    for (const draw of draws) {
+      if (draw.scissor) this.compositor.setScissor(draw.scissor.x, draw.scissor.y, draw.scissor.width, draw.scissor.height)
+      this.compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity, draw.adjustments)
+      if (draw.scissor) this.compositor.clearScissor()
+    }
     for (const frame of framesToClose) frame.close()
+  }
+
+  private blackSource: OffscreenCanvas | undefined
+  private getBlackSource(): OffscreenCanvas {
+    if (!this.blackSource) {
+      const canvas = new OffscreenCanvas(2, 2)
+      const ctx = canvas.getContext('2d')
+      ctx?.fillRect(0, 0, 2, 2)
+      this.blackSource = canvas
+    }
+    return this.blackSource
   }
 
   /** Sets or clears a live transform preview for `clipId`, applied on top of the doc until cleared. */
@@ -210,33 +311,56 @@ export class Transport {
     this.activeAudioSources = []
   }
 
+  /**
+   * Schedules every clip from `fromMicros` to the end of the project, not
+   * just whatever's active right now — a clip that starts later in this
+   * playback still needs its `AudioBufferSourceNode.start()` call queued up
+   * front, since Web Audio scheduling is not something you can append to
+   * mid-playback without introducing a gap.
+   */
   private async scheduleAudio(fromMicros: Micros): Promise<void> {
     const ctx = this.ensureAudioContext()
-    const active = findActiveClips(this.getDoc(), fromMicros)
-    for (const { clip, track, clipLocalMicros } of active) {
-      if (clip.muted || track.muted || track.kind === 'text') continue
-      const asset = this.getDoc().assets.find((a) => a.id === clip.assetId)
-      if (!asset || (asset.kind !== 'audio' && asset.kind !== 'video')) continue
+    const doc = this.getDoc()
+    for (const track of doc.tracks) {
+      if (track.muted || track.kind === 'text') continue
+      for (const clip of track.clips) {
+        if (clip.muted) continue
+        const clipEndMicros = clip.startMicros + clip.durationMicros
+        if (clipEndMicros <= fromMicros) continue
 
-      const buffer = await this.getAudioBuffer(asset.id)
-      if (!buffer || !this.playing) continue
+        const asset = doc.assets.find((a) => a.id === clip.assetId)
+        if (!asset || (asset.kind !== 'audio' && asset.kind !== 'video')) continue
+        const buffer = await this.getAudioBuffer(asset.id)
+        if (!buffer || !this.playing) continue
 
-      const offsetSeconds = Math.min(
-        buffer.duration,
-        Math.max(0, (clip.inPointMicros + clipLocalMicros * clip.speed) / 1_000_000),
-      )
-      const remainingSeconds = Math.max(0, (clip.durationMicros - clipLocalMicros) / (1_000_000 * clip.speed))
-      const playableSeconds = Math.min(remainingSeconds, (buffer.duration - offsetSeconds) / clip.speed)
-      if (playableSeconds <= 0) continue
+        // How far into the clip's own timeline this source starts (0 unless
+        // the clip was already playing when playback began).
+        const clipLocalStartMicros = Math.max(0, fromMicros - clip.startMicros)
+        const whenSeconds = this.playStartCtxTime + Math.max(0, clip.startMicros - fromMicros) / 1_000_000
 
-      const source = ctx.createBufferSource()
-      source.buffer = buffer
-      source.playbackRate.value = clip.speed
-      const gain = ctx.createGain()
-      gain.gain.value = clip.volume
-      source.connect(gain).connect(this.masterGain!)
-      source.start(this.playStartCtxTime, offsetSeconds, playableSeconds * clip.speed)
-      this.activeAudioSources.push(source)
+        const sourceOffsetSeconds = Math.min(
+          buffer.duration,
+          Math.max(0, (clip.inPointMicros + clipLocalStartMicros * clip.speed) / 1_000_000),
+        )
+        const sourceRemainingSeconds = ((clip.durationMicros - clipLocalStartMicros) * clip.speed) / 1_000_000
+        const playableSourceSeconds = Math.min(sourceRemainingSeconds, buffer.duration - sourceOffsetSeconds)
+        if (playableSourceSeconds <= 0) continue
+
+        const source = ctx.createBufferSource()
+        source.buffer = buffer
+        source.playbackRate.value = clip.speed
+        const gain = ctx.createGain()
+        const envelope = computeGainEnvelope(clip, clipLocalStartMicros)
+        const base = Math.max(whenSeconds, ctx.currentTime)
+        gain.gain.cancelScheduledValues(base)
+        for (const point of envelope) {
+          if (point.ramp) gain.gain.linearRampToValueAtTime(point.value, base + point.atSeconds)
+          else gain.gain.setValueAtTime(point.value, base + point.atSeconds)
+        }
+        source.connect(gain).connect(this.masterGain!)
+        source.start(whenSeconds, sourceOffsetSeconds, playableSourceSeconds)
+        this.activeAudioSources.push(source)
+      }
     }
   }
 

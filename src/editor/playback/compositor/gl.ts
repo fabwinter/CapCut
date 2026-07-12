@@ -1,3 +1,4 @@
+import { NEUTRAL_ADJUSTMENTS, type Adjustments } from './adjustments'
 import type { Quad } from './transform2d'
 import { pxToNdc } from './transform2d'
 
@@ -17,9 +18,27 @@ in vec2 v_texcoord;
 out vec4 outColor;
 uniform sampler2D u_texture;
 uniform float u_opacity;
+uniform float u_brightness;
+uniform float u_contrast;
+uniform float u_saturation;
+uniform float u_temperature;
+uniform float u_vignette;
 void main() {
-  vec4 color = texture(u_texture, v_texcoord);
-  outColor = vec4(color.rgb, color.a * u_opacity);
+  vec4 texel = texture(u_texture, v_texcoord);
+  vec3 color = texel.rgb;
+
+  color += u_brightness;
+  color = (color - 0.5) * u_contrast + 0.5;
+  float luma = dot(color, vec3(0.299, 0.587, 0.114));
+  color = mix(vec3(luma), color, u_saturation);
+  color.r += u_temperature * 0.15;
+  color.b -= u_temperature * 0.15;
+
+  vec2 centered = v_texcoord - 0.5;
+  float vignette = 1.0 - u_vignette * smoothstep(0.2, 0.8, length(centered));
+  color *= vignette;
+
+  outColor = vec4(clamp(color, 0.0, 1.0), texel.a * u_opacity);
 }
 `
 
@@ -66,6 +85,11 @@ export class Compositor {
   private readonly positionLoc: number
   private readonly texcoordLoc: number
   private readonly opacityLoc: WebGLUniformLocation | null
+  private readonly brightnessLoc: WebGLUniformLocation | null
+  private readonly contrastLoc: WebGLUniformLocation | null
+  private readonly saturationLoc: WebGLUniformLocation | null
+  private readonly temperatureLoc: WebGLUniformLocation | null
+  private readonly vignetteLoc: WebGLUniformLocation | null
   private readonly textures = new Map<string, WebGLTexture>()
   private canvasWidth = 0
   private canvasHeight = 0
@@ -78,6 +102,11 @@ export class Compositor {
     this.positionLoc = gl.getAttribLocation(this.program, 'a_position')
     this.texcoordLoc = gl.getAttribLocation(this.program, 'a_texcoord')
     this.opacityLoc = gl.getUniformLocation(this.program, 'u_opacity')
+    this.brightnessLoc = gl.getUniformLocation(this.program, 'u_brightness')
+    this.contrastLoc = gl.getUniformLocation(this.program, 'u_contrast')
+    this.saturationLoc = gl.getUniformLocation(this.program, 'u_saturation')
+    this.temperatureLoc = gl.getUniformLocation(this.program, 'u_temperature')
+    this.vignetteLoc = gl.getUniformLocation(this.program, 'u_vignette')
 
     const positionBuffer = gl.createBuffer()
     const texcoordBuffer = gl.createBuffer()
@@ -126,7 +155,13 @@ export class Compositor {
   }
 
   /** Uploads `source` into the quad `slotKey` and draws it at `opacity`, quad given in canvas pixel space. */
-  drawLayer(slotKey: string, source: TexImageSource, quad: Quad, opacity: number): void {
+  drawLayer(
+    slotKey: string,
+    source: TexImageSource,
+    quad: Quad,
+    opacity: number,
+    adjustments: Adjustments = NEUTRAL_ADJUSTMENTS,
+  ): void {
     const gl = this.gl
     const texture = this.getTexture(slotKey)
     gl.bindTexture(gl.TEXTURE_2D, texture)
@@ -150,7 +185,24 @@ export class Compositor {
     gl.vertexAttribPointer(this.texcoordLoc, 2, gl.FLOAT, false, 0, 0)
 
     gl.uniform1f(this.opacityLoc, opacity)
+    gl.uniform1f(this.brightnessLoc, adjustments.brightness)
+    gl.uniform1f(this.contrastLoc, adjustments.contrast)
+    gl.uniform1f(this.saturationLoc, adjustments.saturation)
+    gl.uniform1f(this.temperatureLoc, adjustments.temperature)
+    gl.uniform1f(this.vignetteLoc, adjustments.vignette)
     gl.drawArrays(gl.TRIANGLES, 0, 6)
+  }
+
+  /** Restricts subsequent draws to a canvas-pixel-space rect (top-left origin) — used for the wipe transition's reveal. */
+  setScissor(x: number, y: number, width: number, height: number): void {
+    const gl = this.gl
+    gl.enable(gl.SCISSOR_TEST)
+    // WebGL's scissor origin is bottom-left; flip from the top-left pixel space the rest of this module uses.
+    gl.scissor(Math.round(x), Math.round(this.canvasHeight - y - height), Math.round(width), Math.round(height))
+  }
+
+  clearScissor(): void {
+    this.gl.disable(this.gl.SCISSOR_TEST)
   }
 
   /** Drops a cached texture — call when a clip leaves the visible set so its GPU memory isn't held forever. */

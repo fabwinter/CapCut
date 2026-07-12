@@ -3,6 +3,7 @@ import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon } from
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
+import { Inspector } from '#/components/editor/Inspector'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
 import { Timeline } from '#/components/editor/timeline/Timeline'
@@ -114,6 +115,8 @@ function Editor() {
             <Timeline projectId={projectId} doc={doc} />
           </div>
         </div>
+
+        <Inspector />
       </main>
     </div>
   )
