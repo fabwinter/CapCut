@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { computeGainEnvelope } from './audioEnvelope'
 
-const BASE = { volume: 1, muted: false, fadeInMicros: 0, fadeOutMicros: 0, durationMicros: 4_000_000 }
+const BASE = { volume: 1, muted: false, fadeInMicros: 0, fadeOutMicros: 0, durationMicros: 4_000_000, keyframes: [] }
 
 describe('computeGainEnvelope', () => {
   it('is a flat line at the clip volume with no fades', () => {
@@ -46,5 +46,34 @@ describe('computeGainEnvelope', () => {
     expect(points[0].value).toBeCloseTo(0.5, 5)
     expect(points.some((p) => !p.ramp && p.atSeconds > 0)).toBe(false)
     expect(points.at(-1)).toEqual({ atSeconds: 0.5, value: 0, ramp: true })
+  })
+
+  it('bends the envelope at volume keyframes', () => {
+    const points = computeGainEnvelope(
+      {
+        ...BASE,
+        keyframes: [
+          { id: 'k1', property: 'volume', atMicros: 1_000_000, value: 0.2, easing: 'linear' },
+          { id: 'k2', property: 'volume', atMicros: 3_000_000, value: 1.5, easing: 'linear' },
+        ],
+      },
+      0,
+    )
+    expect(points).toContainEqual({ atSeconds: 1, value: 0.2, ramp: true })
+    expect(points).toContainEqual({ atSeconds: 3, value: 1.5, ramp: true })
+    // Before the first keyframe, the value holds at the first keyframe's level.
+    expect(points[0]).toEqual({ atSeconds: 0, value: 0.2, ramp: false })
+  })
+
+  it('mute silences the clip even with volume keyframes', () => {
+    const points = computeGainEnvelope(
+      {
+        ...BASE,
+        muted: true,
+        keyframes: [{ id: 'k1', property: 'volume', atMicros: 1_000_000, value: 0.9, easing: 'linear' }],
+      },
+      0,
+    )
+    expect(points.every((p) => p.value === 0)).toBe(true)
   })
 })

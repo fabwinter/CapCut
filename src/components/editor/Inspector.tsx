@@ -29,7 +29,6 @@ const ADJUSTMENTS: { type: EffectType; label: string; min: number; max: number; 
   { type: 'vignette', label: 'Vignette', min: 0, max: 1, neutral: 0, step: 0.02 },
 ]
 
-// Volume keyframes aren't wired into audio playback yet (see transport.ts) — only offer the transform properties here.
 const KEYFRAME_PROPERTIES: Exclude<KeyframableProperty, 'volume'>[] = ['x', 'y', 'scale', 'rotation', 'opacity']
 
 function findClip(doc: ProjectDoc, clipId: string): Clip | undefined {
@@ -91,6 +90,15 @@ export function Inspector() {
             onCheckedChange={(checked) => dispatch(setClipMuted(clip.id, checked))}
           />
         </label>
+        <Button
+          size="xs"
+          variant="outline"
+          className="mt-1"
+          data-field="add-keyframe-volume"
+          onClick={() => dispatch(addKeyframe(clip.id, 'volume', clipLocalPlayhead, clip.volume))}
+        >
+          ◇ Add volume keyframe at playhead
+        </Button>
       </Section>
 
       <Section title="Fade">
