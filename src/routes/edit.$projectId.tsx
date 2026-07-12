@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
+import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
 import { Timeline } from '#/components/editor/timeline/Timeline'
 import { renameProject } from '#/editor/doc/commands/project'
 import { useEditorStore } from '#/editor/state/editorStore'
@@ -105,13 +106,8 @@ function Editor() {
         </aside>
 
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="bg-black/90 flex flex-1 items-center justify-center overflow-hidden">
-            <div
-              className="bg-black flex max-h-full max-w-full items-center justify-center ring-1 ring-white/10"
-              style={{ aspectRatio: `${doc.settings.width} / ${doc.settings.height}`, height: '100%' }}
-            >
-              <span className="text-white/30 text-xs">Preview — Phase 4</span>
-            </div>
+          <div className="bg-black/90 flex min-h-0 flex-1 flex-col overflow-hidden">
+            <PreviewCanvas projectId={projectId} doc={doc} />
           </div>
 
           <div className="border-border bg-card/40 h-56 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)]">

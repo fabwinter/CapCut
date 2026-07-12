@@ -1,0 +1,220 @@
+import { demuxVideoTrack, type VideoTrackInfo } from '#/editor/media/demux'
+
+/**
+ * Frame-access API for playback and export: `assetId + timestamp -> VideoFrame`.
+ *
+ * Scoped to **proxy** media (baseline-profile H.264, no B-frames — see
+ * `videoDerivatives.ts`), so presentation order equals decode order and a
+ * single forward-decoding cursor per asset is sufficient; there's no need
+ * for a full random-access frame index. Export (Phase 6) decodes originals,
+ * which may need a more general approach and is out of scope here.
+ *
+ * Every `VideoFrame` handed to a caller is a `.clone()` of an internally
+ * cached frame — the cache owns and closes its frames on eviction/session
+ * close; callers own and must close whatever they're given.
+ */
+
+interface Sample {
+  chunk: EncodedVideoChunkInit
+  timestampMicros: number
+  isKey: boolean
+}
+
+/** Rough byte estimate for an RGBA-ish decoded frame — good enough for a cache budget, not exact. */
+function estimateFrameBytes(width: number, height: number): number {
+  return width * height * 4
+}
+
+class AssetDecoderSession {
+  private samples: Sample[] = []
+  private trackInfo: VideoTrackInfo | undefined
+  private decoder: VideoDecoder | undefined
+  private decodedUpToIndex = -1
+  private readonly cache = new Map<number, VideoFrame>() // sample index -> frame, insertion order = LRU
+  private cacheBytes = 0
+  private readonly loaded: Promise<void>
+  private pendingOutputs: ((frame: VideoFrame) => void)[] = []
+
+  constructor(
+    private readonly file: File,
+    private readonly cacheByteBudget: number,
+  ) {
+    this.loaded = this.load()
+  }
+
+  private async load(): Promise<void> {
+    await demuxVideoTrack(this.file, {
+      onTrackInfo: (info) => {
+        this.trackInfo = info
+      },
+      onSample: (chunk) => {
+        this.samples.push({ chunk, timestampMicros: chunk.timestamp, isKey: chunk.type === 'key' })
+      },
+    })
+  }
+
+  private ensureDecoder(): VideoDecoder {
+    if (this.decoder) return this.decoder
+    const info = this.trackInfo
+    if (!info) throw new Error('Track info not loaded')
+    const decoder = new VideoDecoder({
+      output: (frame) => {
+        const cb = this.pendingOutputs.shift()
+        if (cb) cb(frame)
+        else frame.close()
+      },
+      error: () => {
+        // Surfaced via getFrameAt's rejection path when decode() itself throws;
+        // an async decoder error with no in-flight caller just drops the frame.
+      },
+    })
+    decoder.configure({
+      codec: info.codec,
+      codedWidth: info.width,
+      codedHeight: info.height,
+      description: info.description,
+    })
+    this.decoder = decoder
+    return decoder
+  }
+
+  private findSampleIndex(timestampMicros: number): number {
+    // Last sample whose timestamp is <= target (samples are presentation-ordered for baseline H.264).
+    let lo = 0
+    let hi = this.samples.length - 1
+    let result = 0
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (this.samples[mid].timestampMicros <= timestampMicros) {
+        result = mid
+        lo = mid + 1
+      } else {
+        hi = mid - 1
+      }
+    }
+    return result
+  }
+
+  private nearestKeyframeIndex(targetIndex: number): number {
+    for (let i = targetIndex; i >= 0; i--) {
+      if (this.samples[i].isKey) return i
+    }
+    return 0
+  }
+
+  private cacheFrame(index: number, frame: VideoFrame): void {
+    const bytes = estimateFrameBytes(frame.codedWidth, frame.codedHeight)
+    this.cache.set(index, frame)
+    this.cacheBytes += bytes
+    while (this.cacheBytes > this.cacheByteBudget && this.cache.size > 1) {
+      const oldestKey = this.cache.keys().next().value
+      if (oldestKey === undefined || oldestKey === index) break
+      const oldest = this.cache.get(oldestKey)
+      if (oldest) {
+        this.cacheBytes -= estimateFrameBytes(oldest.codedWidth, oldest.codedHeight)
+        oldest.close()
+      }
+      this.cache.delete(oldestKey)
+    }
+  }
+
+  private touch(index: number, frame: VideoFrame): void {
+    this.cache.delete(index)
+    this.cache.set(index, frame)
+  }
+
+  async getFrameAt(timestampMicros: number): Promise<VideoFrame | undefined> {
+    await this.loaded
+    if (this.samples.length === 0) return undefined
+    const targetIndex = this.findSampleIndex(timestampMicros)
+
+    const cached = this.cache.get(targetIndex)
+    if (cached) {
+      this.touch(targetIndex, cached)
+      return cached.clone()
+    }
+
+    // Decode forward from the nearest keyframe if we haven't already passed
+    // it; otherwise a plain forward-advance from where we left off is enough.
+    const keyframeIndex = this.nearestKeyframeIndex(targetIndex)
+    const needsReseek = this.decodedUpToIndex < keyframeIndex - 1 || targetIndex < this.decodedUpToIndex
+    const decoder = this.ensureDecoder()
+    let startIndex: number
+    if (needsReseek) {
+      await decoder.flush().catch(() => {})
+      decoder.close()
+      this.decoder = undefined
+      startIndex = keyframeIndex
+    } else {
+      startIndex = this.decodedUpToIndex + 1
+    }
+    const activeDecoder = this.ensureDecoder()
+
+    let targetFrame: VideoFrame | undefined
+    for (let i = startIndex; i <= targetIndex; i++) {
+      const sample = this.samples[i]
+      const framePromise = new Promise<VideoFrame>((resolve) => this.pendingOutputs.push(resolve))
+      activeDecoder.decode(new EncodedVideoChunk(sample.chunk))
+      const frame = await framePromise
+      this.decodedUpToIndex = i
+      if (i === targetIndex) {
+        targetFrame = frame
+        this.cacheFrame(i, frame)
+      } else {
+        frame.close()
+      }
+    }
+    return targetFrame?.clone()
+  }
+
+  close(): void {
+    for (const frame of this.cache.values()) frame.close()
+    this.cache.clear()
+    this.cacheBytes = 0
+    this.decoder?.close()
+    this.decoder = undefined
+    this.decodedUpToIndex = -1
+  }
+}
+
+const DEFAULT_MAX_SESSIONS = 2
+const DEFAULT_CACHE_BYTES_PER_ASSET = 32 * 1024 * 1024
+
+/**
+ * Owns a bounded pool of `AssetDecoderSession`s (memory is the scarcest
+ * resource on iPad — see ARCHITECTURE §2.1) — at most `maxSessions` assets
+ * have an open decoder at once, least-recently-used evicted first.
+ */
+export class FrameSourceManager {
+  private readonly sessions = new Map<string, AssetDecoderSession>()
+
+  constructor(
+    private readonly maxSessions = DEFAULT_MAX_SESSIONS,
+    private readonly cacheByteBudgetPerAsset = DEFAULT_CACHE_BYTES_PER_ASSET,
+  ) {}
+
+  async getFrame(assetId: string, file: File, timestampMicros: number): Promise<VideoFrame | undefined> {
+    let session = this.sessions.get(assetId)
+    if (session) {
+      // Re-insert to mark most-recently-used (Map preserves insertion order).
+      this.sessions.delete(assetId)
+      this.sessions.set(assetId, session)
+    } else {
+      if (this.sessions.size >= this.maxSessions) {
+        const lruId = this.sessions.keys().next().value
+        if (lruId !== undefined) {
+          this.sessions.get(lruId)?.close()
+          this.sessions.delete(lruId)
+        }
+      }
+      session = new AssetDecoderSession(file, this.cacheByteBudgetPerAsset)
+      this.sessions.set(assetId, session)
+    }
+    return session.getFrameAt(timestampMicros)
+  }
+
+  closeAll(): void {
+    for (const session of this.sessions.values()) session.close()
+    this.sessions.clear()
+  }
+}
