@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { formatDistanceToNow } from 'date-fns'
-import { FilmIcon, MoreVerticalIcon, PlusIcon } from 'lucide-react'
-import { useState } from 'react'
+import { DownloadIcon, FilmIcon, LoaderCircleIcon, MoreVerticalIcon, PlusIcon, UploadIcon } from 'lucide-react'
+import { useRef, useState } from 'react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,8 +29,10 @@ import {
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
 import { Input } from '#/components/ui/input'
+import { StorageMeter } from '#/components/StorageMeter'
 import { projectDurationMicros, type ProjectDoc } from '#/editor/doc/schema'
 import { microsToSeconds } from '#/editor/doc/time'
+import { exportProjectBackup, restoreProjectBackup } from '#/storage/backup'
 import { useProjects } from '#/storage/useProjects'
 
 export const Route = createFileRoute('/')({ component: Gallery })
@@ -44,7 +46,7 @@ function formatDuration(micros: number): string {
 
 function Gallery() {
   const navigate = useNavigate()
-  const { projects, isLoading, createProject, renameProject, duplicateProject, removeProject } =
+  const { projects, isLoading, createProject, renameProject, duplicateProject, removeProject, refresh } =
     useProjects()
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -53,6 +55,33 @@ function Gallery() {
   const [renameValue, setRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProjectDoc | null>(null)
   const [busy, setBusy] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
+  const restoreInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleBackup(project: ProjectDoc) {
+    const blob = await exportProjectBackup(project.id, project)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${project.name}.ccproj`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleRestoreFile(file: File) {
+    setRestoring(true)
+    setRestoreError(null)
+    try {
+      const doc = await restoreProjectBackup(file)
+      await refresh()
+      navigate({ to: '/edit/$projectId', params: { projectId: doc.id } })
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRestoring(false)
+    }
+  }
 
   async function handleCreate() {
     const name = newName.trim() || 'Untitled Project'
@@ -81,11 +110,44 @@ function Gallery() {
     <div className="mx-auto min-h-dvh max-w-6xl px-6 py-8 [padding-top:calc(env(safe-area-inset-top)+2rem)]">
       <header className="mb-8 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">CapCut for iPad</h1>
-        <Button size="lg" className="h-11 gap-2 px-4 text-sm" onClick={() => setCreateOpen(true)}>
-          <PlusIcon className="size-4" />
-          New Project
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="lg"
+            className="h-11 gap-2 px-4 text-sm"
+            data-action="restore-backup"
+            disabled={restoring}
+            onClick={() => restoreInputRef.current?.click()}
+          >
+            {restoring ? <LoaderCircleIcon className="size-4 animate-spin" /> : <UploadIcon className="size-4" />}
+            {restoring ? 'Restoring…' : 'Restore Backup'}
+          </Button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            data-restore-backup-input
+            accept=".ccproj,application/zip"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              e.target.value = ''
+              if (file) handleRestoreFile(file)
+            }}
+          />
+          <Button size="lg" className="h-11 gap-2 px-4 text-sm" onClick={() => setCreateOpen(true)}>
+            <PlusIcon className="size-4" />
+            New Project
+          </Button>
+        </div>
       </header>
+
+      {restoreError && (
+        <p data-restore-error className="border-destructive/40 bg-destructive/10 text-destructive mb-6 rounded-lg border px-3 py-2 text-xs">
+          Restore failed: {restoreError}
+        </p>
+      )}
+
+      <StorageMeter />
 
       {isLoading ? (
         <div className="text-muted-foreground py-24 text-center text-sm">Loading projects…</div>
@@ -137,6 +199,10 @@ function Gallery() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => duplicateProject(project.id)}>
                         Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem data-action="backup-project" onClick={() => handleBackup(project)}>
+                        <DownloadIcon className="size-3.5" />
+                        Backup
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         variant="destructive"

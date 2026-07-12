@@ -16,7 +16,7 @@ async function createProjectAndGetToEditor(page: import('@playwright/test').Page
 test('importing a video never hangs and always reaches a terminal status', async ({ page }) => {
   await createProjectAndGetToEditor(page, 'Import Test')
 
-  await page.locator('input[type=file]').setInputFiles(path.join(fixturesDir, 'test-clip.mp4'))
+  await page.locator('[data-media-import-input]').setInputFiles(path.join(fixturesDir, 'test-clip.mp4'))
 
   const row = page.locator('[data-asset-row]').first()
   await expect(row).toBeVisible()
@@ -47,7 +47,7 @@ test('importing an image populates dimensions and reaches ready', async ({ page 
   // 1x1 transparent PNG — enough to exercise createImageBitmap + status flow.
   const pngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
-  await page.locator('input[type=file]').setInputFiles({
+  await page.locator('[data-media-import-input]').setInputFiles({
     name: 'pixel.png',
     mimeType: 'image/png',
     buffer: Buffer.from(pngBase64, 'base64'),

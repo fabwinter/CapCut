@@ -1,5 +1,7 @@
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { TooltipProvider } from '#/components/ui/tooltip'
+import { registerServiceWorker } from '#/pwa/registerServiceWorker'
 
 import appCss from '../styles.css?url'
 
@@ -19,6 +21,8 @@ export const Route = createRootRoute({
     ],
     links: [
       { rel: 'icon', href: '/favicon.ico', type: 'image/x-icon' },
+      { rel: 'icon', href: '/icon.svg', type: 'image/svg+xml' },
+      { rel: 'apple-touch-icon', href: '/icon.svg' },
       { rel: 'manifest', href: '/manifest.webmanifest' },
       { rel: 'stylesheet', href: appCss },
     ],
@@ -27,6 +31,10 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    registerServiceWorker()
+  }, [])
+
   return (
     <html lang="en" className="dark">
       <head>

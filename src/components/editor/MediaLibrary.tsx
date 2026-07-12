@@ -73,6 +73,7 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
         <input
           ref={inputRef}
           type="file"
+          data-media-import-input
           accept="video/*,image/*,audio/*"
           multiple
           className="hidden"
