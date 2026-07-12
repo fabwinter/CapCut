@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeAdjustments, NEUTRAL_ADJUSTMENTS } from './adjustments'
+import { computeAdjustments, computeLutSelection, NEUTRAL_ADJUSTMENTS } from './adjustments'
 
 describe('computeAdjustments', () => {
   it('returns neutral values for a clip with no effects', () => {
@@ -24,5 +24,25 @@ describe('computeAdjustments', () => {
   it('ignores non-adjustment effect types like lut', () => {
     const result = computeAdjustments([{ id: '1', type: 'lut', params: {}, lutAssetId: 'x' }])
     expect(result).toEqual(NEUTRAL_ADJUSTMENTS)
+  })
+})
+
+describe('computeLutSelection', () => {
+  it('is undefined with no lut effect', () => {
+    expect(computeLutSelection([{ id: '1', type: 'brightness', params: { value: 0.2 } }])).toBeUndefined()
+  })
+
+  it('is undefined for a lut effect missing an asset id', () => {
+    expect(computeLutSelection([{ id: '1', type: 'lut', params: { value: 1 } }])).toBeUndefined()
+  })
+
+  it('reads the lut id and intensity', () => {
+    const result = computeLutSelection([{ id: '1', type: 'lut', params: { value: 0.5 }, lutAssetId: 'warm' }])
+    expect(result).toEqual({ lutId: 'warm', intensity: 0.5 })
+  })
+
+  it('defaults intensity to 1 when unset', () => {
+    const result = computeLutSelection([{ id: '1', type: 'lut', params: {}, lutAssetId: 'cool' }])
+    expect(result).toEqual({ lutId: 'cool', intensity: 1 })
   })
 })

@@ -5,9 +5,10 @@ import { Slider } from '#/components/ui/slider'
 import { Switch } from '#/components/ui/switch'
 import { setClipFades, setClipMuted, setClipSpeed, setClipVolume } from '#/editor/doc/commands/clipProperties'
 import { addKeyframe, deleteKeyframe } from '#/editor/doc/commands/keyframes'
-import { setAdjustment } from '#/editor/doc/commands/effects'
+import { setAdjustment, setLut } from '#/editor/doc/commands/effects'
 import { setTransitionOut } from '#/editor/doc/commands/transitions'
 import { setClipTransform } from '#/editor/doc/commands/transform'
+import { BUILTIN_LUTS } from '#/editor/playback/compositor/lutStore'
 import type { Clip, EffectType, KeyframableProperty, ProjectDoc, TransitionType } from '#/editor/doc/schema'
 import { findAdjacentNextClip } from '#/editor/doc/selectors/transitions'
 import { microsToSeconds, secondsToMicros } from '#/editor/doc/time'
@@ -57,6 +58,7 @@ export function Inspector() {
 
   const nextClip = findAdjacentNextClip(doc, clip)
   const clipLocalPlayhead = Math.max(0, Math.min(clip.durationMicros, playheadMicros - clip.startMicros))
+  const lutEffect = clip.effects.find((e) => e.type === 'lut')
 
   return (
     <aside data-inspector className="border-border bg-card/40 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3">
@@ -152,6 +154,41 @@ export function Inspector() {
             )
           })}
         </div>
+      </Section>
+
+      <Section title="LUT">
+        <div className="flex flex-wrap gap-1">
+          <Button
+            size="xs"
+            variant={!lutEffect ? 'default' : 'outline'}
+            data-field="lut-none"
+            onClick={() => dispatch(setLut(clip.id, null))}
+          >
+            None
+          </Button>
+          {BUILTIN_LUTS.map((lutId) => (
+            <Button
+              key={lutId}
+              size="xs"
+              variant={lutEffect?.lutAssetId === lutId ? 'default' : 'outline'}
+              data-field={`lut-${lutId}`}
+              onClick={() => dispatch(setLut(clip.id, lutId, lutEffect?.lutAssetId === lutId ? lutEffect.params.value : 1))}
+            >
+              {lutId[0].toUpperCase() + lutId.slice(1)}
+            </Button>
+          ))}
+        </div>
+        {lutEffect && (
+          <SliderRow
+            data-field="lut-intensity"
+            label={`${Math.round(lutEffect.params.value * 100)}%`}
+            value={lutEffect.params.value}
+            min={0}
+            max={1}
+            step={0.05}
+            onCommit={(v) => lutEffect.lutAssetId && dispatch(setLut(clip.id, lutEffect.lutAssetId, v))}
+          />
+        )}
       </Section>
 
       {nextClip && (

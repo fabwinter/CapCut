@@ -42,6 +42,35 @@ export function setAdjustment(clipId: string, type: EffectType, value: number, n
   }
 }
 
+/** Sets or clears the clip's LUT color grade — like the adjust sliders, at most one `lut` effect per clip. */
+export function setLut(clipId: string, lutId: string | null, intensity = 1): Command {
+  return {
+    name: 'SetLut',
+    recipe: (draft) => {
+      const clip = findClip(draft, clipId)
+      if (!clip) return
+      const index = clip.effects.findIndex((e) => e.type === 'lut')
+
+      if (lutId === null) {
+        if (index === -1) return
+        clip.effects.splice(index, 1)
+        draft.modifiedAt = Date.now()
+        return
+      }
+
+      if (index === -1) {
+        clip.effects.push({ id: createId(), type: 'lut', params: { value: intensity }, lutAssetId: lutId })
+      } else {
+        const existing = clip.effects[index]
+        if (existing.lutAssetId === lutId && existing.params.value === intensity) return
+        existing.lutAssetId = lutId
+        existing.params.value = intensity
+      }
+      draft.modifiedAt = Date.now()
+    },
+  }
+}
+
 export function removeEffect(clipId: string, effectId: string): Command {
   return {
     name: 'RemoveEffect',

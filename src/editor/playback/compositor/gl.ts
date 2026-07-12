@@ -12,17 +12,40 @@ void main() {
 }
 `
 
+// LUT strip texture layout: width = LUT_SIZE*LUT_SIZE, height = LUT_SIZE.
+// Slice `b` (0..LUT_SIZE-1) occupies columns [b*LUT_SIZE, (b+1)*LUT_SIZE); within
+// a slice, column = red index, row = green index (see gen_luts.py).
 const FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 in vec2 v_texcoord;
 out vec4 outColor;
 uniform sampler2D u_texture;
+uniform sampler2D u_lut;
+uniform float u_lutIntensity;
 uniform float u_opacity;
 uniform float u_brightness;
 uniform float u_contrast;
 uniform float u_saturation;
 uniform float u_temperature;
 uniform float u_vignette;
+
+const float LUT_SIZE = 8.0;
+
+vec3 applyLut(vec3 color) {
+  vec3 c = clamp(color, 0.0, 1.0);
+  float blueScaled = c.b * (LUT_SIZE - 1.0);
+  float slice0 = floor(blueScaled);
+  float slice1 = min(slice0 + 1.0, LUT_SIZE - 1.0);
+  float sliceFrac = blueScaled - slice0;
+
+  vec2 cellCenter = (c.rg * (LUT_SIZE - 1.0) + 0.5) / LUT_SIZE;
+  vec2 uv0 = vec2((slice0 + cellCenter.x) / LUT_SIZE, cellCenter.y);
+  vec2 uv1 = vec2((slice1 + cellCenter.x) / LUT_SIZE, cellCenter.y);
+
+  vec3 graded = mix(texture(u_lut, uv0).rgb, texture(u_lut, uv1).rgb, sliceFrac);
+  return mix(color, graded, u_lutIntensity);
+}
+
 void main() {
   vec4 texel = texture(u_texture, v_texcoord);
   vec3 color = texel.rgb;
@@ -33,6 +56,8 @@ void main() {
   color = mix(vec3(luma), color, u_saturation);
   color.r += u_temperature * 0.15;
   color.b -= u_temperature * 0.15;
+
+  if (u_lutIntensity > 0.0) color = applyLut(color);
 
   vec2 centered = v_texcoord - 0.5;
   float vignette = 1.0 - u_vignette * smoothstep(0.2, 0.8, length(centered));
@@ -91,7 +116,13 @@ export class Compositor {
   private saturationLoc!: WebGLUniformLocation | null
   private temperatureLoc!: WebGLUniformLocation | null
   private vignetteLoc!: WebGLUniformLocation | null
+  private lutLoc!: WebGLUniformLocation | null
+  private lutIntensityLoc!: WebGLUniformLocation | null
   private readonly textures = new Map<string, WebGLTexture>()
+  // Separate from `textures`: LUT strips are static built-in assets shared
+  // across every clip, keyed by lutId and uploaded once rather than re-sent
+  // to the GPU on every draw like per-clip video frames are.
+  private readonly lutTextures = new Map<string, WebGLTexture>()
   private canvasWidth = 0
   private canvasHeight = 0
   private contextLost = false
@@ -121,6 +152,7 @@ export class Compositor {
     event.preventDefault()
     this.contextLost = true
     this.textures.clear()
+    this.lutTextures.clear()
     this.onContextLost?.()
   }
 
@@ -141,6 +173,8 @@ export class Compositor {
     this.saturationLoc = gl.getUniformLocation(this.program, 'u_saturation')
     this.temperatureLoc = gl.getUniformLocation(this.program, 'u_temperature')
     this.vignetteLoc = gl.getUniformLocation(this.program, 'u_vignette')
+    this.lutLoc = gl.getUniformLocation(this.program, 'u_lut')
+    this.lutIntensityLoc = gl.getUniformLocation(this.program, 'u_lutIntensity')
 
     const positionBuffer = gl.createBuffer()
     const texcoordBuffer = gl.createBuffer()
@@ -196,6 +230,30 @@ export class Compositor {
     return texture
   }
 
+  /** Uploads a LUT strip texture once per id — built-in assets never change, so re-uploading every frame would be wasted GPU traffic. */
+  private ensureLutTexture(lutId: string, bitmap: TexImageSource): WebGLTexture | undefined {
+    const gl = this.gl
+    let texture = this.lutTextures.get(lutId)
+    if (texture) return texture
+    const created = gl.createTexture()
+    if (!created) return undefined
+    texture = created
+    gl.activeTexture(gl.TEXTURE1)
+    gl.bindTexture(gl.TEXTURE_2D, texture)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+    // NEAREST, not LINEAR — the strip packs unrelated color cells edge to
+    // edge, so linear filtering would blend across cell/slice boundaries.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    gl.activeTexture(gl.TEXTURE0)
+    this.lutTextures.set(lutId, texture)
+    return texture
+  }
+
   /** Uploads `source` into the quad `slotKey` and draws it at `opacity`, quad given in canvas pixel space. */
   drawLayer(
     slotKey: string,
@@ -203,11 +261,13 @@ export class Compositor {
     quad: Quad,
     opacity: number,
     adjustments: Adjustments = NEUTRAL_ADJUSTMENTS,
+    lut?: { id: string; bitmap: TexImageSource; intensity: number },
   ): void {
     if (this.contextLost) return
     const gl = this.gl
     const texture = this.getTexture(slotKey)
     if (!texture) return
+    gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, texture)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
 
@@ -234,6 +294,16 @@ export class Compositor {
     gl.uniform1f(this.saturationLoc, adjustments.saturation)
     gl.uniform1f(this.temperatureLoc, adjustments.temperature)
     gl.uniform1f(this.vignetteLoc, adjustments.vignette)
+
+    const lutTexture = lut ? this.ensureLutTexture(lut.id, lut.bitmap) : undefined
+    gl.uniform1i(this.lutLoc, 1)
+    gl.uniform1f(this.lutIntensityLoc, lutTexture && lut ? lut.intensity : 0)
+    if (lutTexture) {
+      gl.activeTexture(gl.TEXTURE1)
+      gl.bindTexture(gl.TEXTURE_2D, lutTexture)
+      gl.activeTexture(gl.TEXTURE0)
+    }
+
     gl.drawArrays(gl.TRIANGLES, 0, 6)
   }
 
@@ -261,6 +331,8 @@ export class Compositor {
     this.canvas.removeEventListener('webglcontextlost', this.handleContextLost)
     this.canvas.removeEventListener('webglcontextrestored', this.handleContextRestored)
     for (const key of [...this.textures.keys()]) this.releaseSlot(key)
+    for (const texture of this.lutTextures.values()) this.gl.deleteTexture(texture)
+    this.lutTextures.clear()
     this.gl.deleteProgram(this.program)
     this.gl.deleteBuffer(this.positionBuffer)
     this.gl.deleteBuffer(this.texcoordBuffer)

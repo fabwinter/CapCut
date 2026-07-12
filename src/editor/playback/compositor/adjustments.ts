@@ -26,3 +26,15 @@ export function computeAdjustments(effects: Effect[]): Adjustments {
   }
   return result
 }
+
+/** The at-most-one `lut` effect on a clip — a reference to a built-in LUT strip texture, not a scalar uniform, so it's kept separate from `Adjustments`. */
+export interface LutSelection {
+  lutId: string
+  intensity: number
+}
+
+export function computeLutSelection(effects: Effect[]): LutSelection | undefined {
+  const effect = effects.find((e) => e.type === 'lut')
+  if (!effect?.lutAssetId) return undefined
+  return { lutId: effect.lutAssetId, intensity: effect.params.value ?? 1 }
+}
