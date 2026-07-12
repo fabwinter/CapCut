@@ -3,6 +3,7 @@ import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon } from
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
+import { ExportDialog } from '#/components/editor/ExportDialog'
 import { Inspector } from '#/components/editor/Inspector'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
@@ -21,6 +22,7 @@ function Editor() {
   const { doc, canUndo, canRedo, isDirty, isSaving, openProject, dispatch, undo, redo, closeProject } =
     useEditorStore()
   const [loadState, setLoadState] = useState<LoadState>('loading')
+  const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -95,7 +97,7 @@ function Editor() {
 
         <div className="ml-auto flex items-center gap-3">
           <SaveIndicator isDirty={isDirty} isSaving={isSaving} />
-          <Button size="lg" className="h-9 px-4 text-sm" disabled>
+          <Button size="lg" className="h-9 px-4 text-sm" data-action="export" onClick={() => setExportOpen(true)}>
             Export
           </Button>
         </div>
@@ -118,6 +120,14 @@ function Editor() {
 
         <Inspector />
       </main>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        projectId={projectId}
+        projectName={doc.name}
+        doc={doc}
+      />
     </div>
   )
 }
