@@ -42,7 +42,7 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
       compositorRef.current = compositor
 
       // Create frame source for this project
-      const frameSource = new FrameSource()
+      const frameSource = new FrameSource(doc.id)
       frameSourceRef.current = frameSource
 
       const durationMicros = Math.max(

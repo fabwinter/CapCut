@@ -1,5 +1,6 @@
 import type { Micros } from '../doc/time'
 import { snapToFrame } from '../doc/time'
+import { readProxy } from './assetStorage'
 
 /**
  * Frame quality mode for compositing/export.
@@ -78,6 +79,67 @@ class FrameCache {
 }
 
 /**
+ * Video element cache for frame extraction.
+ * One video element per asset to avoid codec conflicts and enable seeking.
+ */
+class VideoElementCache {
+  private videoElements = new Map<string, HTMLVideoElement>()
+
+  private async createVideoElement(projectId: string, assetId: string): Promise<HTMLVideoElement> {
+    const video = new (typeof globalThis !== 'undefined' && (globalThis as any).HTMLVideoElement || HTMLVideoElement)()
+    video.crossOrigin = 'anonymous'
+    video.style.display = 'none'
+
+    try {
+      const proxyFile = await readProxy(projectId, assetId)
+      const url = URL.createObjectURL(proxyFile)
+      video.src = url
+
+      // Wait for metadata to load
+      await new Promise<void>((resolve, reject) => {
+        const handler = () => {
+          video.removeEventListener('loadedmetadata', handler)
+          video.removeEventListener('error', errorHandler)
+          resolve()
+        }
+        const errorHandler = () => {
+          video.removeEventListener('loadedmetadata', handler)
+          video.removeEventListener('error', errorHandler)
+          reject(new Error('Failed to load proxy video'))
+        }
+        video.addEventListener('loadedmetadata', handler)
+        video.addEventListener('error', errorHandler)
+      })
+
+      return video
+    } catch (error) {
+      throw new Error(`Failed to create video element for asset ${assetId}: ${error}`)
+    }
+  }
+
+  async get(projectId: string, assetId: string): Promise<HTMLVideoElement> {
+    const key = `${projectId}-${assetId}`
+    let video = this.videoElements.get(key)
+
+    if (!video) {
+      video = await this.createVideoElement(projectId, assetId)
+      this.videoElements.set(key, video)
+    }
+
+    return video
+  }
+
+  clear(): void {
+    for (const video of this.videoElements.values()) {
+      if (video.src) {
+        URL.revokeObjectURL(video.src)
+      }
+    }
+    this.videoElements.clear()
+  }
+}
+
+/**
  * Decoder pool with max 2 concurrent decoders (future implementation).
  * Currently stubbed; full implementation defers to M2+.
  */
@@ -94,22 +156,26 @@ class DecoderPool {
 }
 
 /**
- * Frame source: provides decoded frames from assets with caching + decoder pooling.
- * Coordinates with the media engine (proxy/original access).
+ * Frame source: provides decoded frames from assets with caching.
+ * Uses video element for efficient frame extraction via canvas.
  */
 export class FrameSource {
   private cache: FrameCache
   private decoderPool: DecoderPool
+  private videoCache: VideoElementCache
+  private projectId: string
 
-  constructor() {
+  constructor(projectId: string = '') {
     this.cache = new FrameCache(50 * 1024 * 1024) // 50MB cache
     this.decoderPool = new DecoderPool(2)
+    this.videoCache = new VideoElementCache()
+    this.projectId = projectId
   }
 
   /**
    * Get a frame from an asset at a specific time.
    * - Returns cached frame if available
-   * - Otherwise fetches and decodes from media engine
+   * - Otherwise extracts from video element and caches
    * - Quality: 'proxy' for editing (faster), 'original' for export
    *
    * Note: Caller must close the VideoFrame when done to avoid memory leaks.
@@ -120,6 +186,11 @@ export class FrameSource {
     fps: number,
     quality: FrameQuality = 'proxy'
   ): Promise<DecodedFrame | null> {
+    if (!this.projectId) {
+      console.warn('FrameSource initialized without projectId')
+      return null
+    }
+
     // Snap time to frame boundary
     const snappedTime = snapToFrame(timeMicros, fps)
     const cacheKey = `${assetId}-${snappedTime}-${quality}`
@@ -130,9 +201,64 @@ export class FrameSource {
       return cached
     }
 
-    // Future: implement actual decode + cache
-    // For now, return null (placeholders in TimelineRenderer will handle)
-    return null
+    try {
+      // Get or create video element for this asset
+      const video = await this.videoCache.get(this.projectId, assetId)
+
+      // Seek to the requested time (in seconds)
+      const timeSeconds = snappedTime / 1_000_000
+      video.currentTime = timeSeconds
+
+      // Wait for the frame to be available
+      await new Promise<void>((resolve, reject) => {
+        const handler = () => {
+          video.removeEventListener('seeked', handler)
+          video.removeEventListener('error', errorHandler)
+          resolve()
+        }
+        const errorHandler = () => {
+          video.removeEventListener('seeked', handler)
+          video.removeEventListener('error', errorHandler)
+          reject(new Error('Failed to seek to frame'))
+        }
+        video.addEventListener('seeked', handler, { once: true })
+        video.addEventListener('error', errorHandler, { once: true })
+
+        // Set a timeout in case seek never completes
+        const timeout = setTimeout(() => {
+          video.removeEventListener('seeked', handler)
+          video.removeEventListener('error', errorHandler)
+          reject(new Error('Seek timeout'))
+        }, 5000)
+
+        video.addEventListener('seeked', () => clearTimeout(timeout), { once: true })
+      })
+
+      // Create an OffscreenCanvas to draw the video frame
+      const canvas = new OffscreenCanvas(video.videoWidth, video.videoHeight)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        throw new Error('Failed to get canvas context')
+      }
+
+      // Draw the current frame
+      ctx.drawImage(video, 0, 0)
+
+      // Convert canvas to VideoFrame
+      const videoFrame = new VideoFrame(canvas, {
+        timestamp: snappedTime,
+        duration: Math.round(1_000_000 / fps),
+      })
+
+      // Cache and return
+      const decodedFrame: DecodedFrame = { frame: videoFrame, timeMicros: snappedTime }
+      this.cache.set(cacheKey, decodedFrame)
+
+      return decodedFrame
+    } catch (error) {
+      console.error('Failed to extract frame:', error)
+      return null
+    }
   }
 
   /**
@@ -185,20 +311,21 @@ export class FrameSource {
   }
 
   /**
-   * Close resources (decoders).
+   * Close resources (video cache, decoders).
    */
   close(): void {
     this.cache.clear()
     this.decoderPool.close()
+    this.videoCache.clear()
   }
 }
 
-// Global singleton instance
-let frameSourceInstance: FrameSource | null = null
+// Global singleton instances (one per project)
+const frameSourceInstances = new Map<string, FrameSource>()
 
-export function getFrameSource(): FrameSource {
-  if (!frameSourceInstance) {
-    frameSourceInstance = new FrameSource()
+export function getFrameSource(projectId: string): FrameSource {
+  if (!frameSourceInstances.has(projectId)) {
+    frameSourceInstances.set(projectId, new FrameSource(projectId))
   }
-  return frameSourceInstance
+  return frameSourceInstances.get(projectId)!
 }
