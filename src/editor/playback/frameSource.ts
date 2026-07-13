@@ -240,56 +240,96 @@ class AssetDecoderSession {
     }
     const activeDecoder = this.ensureDecoder()
 
-    let targetFrame: VideoFrame | undefined
+    // Submit every sample the batch needs *before* awaiting any output —
+    // decoding one sample and awaiting its output before submitting the
+    // next assumes zero pipeline depth, which real decoders don't
+    // guarantee. Per WebCodecs' own guidance: "you do need to feed a few
+    // chunks to get it started... you get frames when you get them" — a
+    // decoder (particularly hardware-backed) can need more than one sample
+    // queued before it emits its *first* output at all. Decode-then-await
+    // in lockstep starves that pipeline and can hang forever on sample 0
+    // even though the decoder is working perfectly, just waiting for more
+    // input it will never receive.
+    const framePromises: Promise<VideoFrame | undefined>[] = []
     for (let i = startIndex; i <= targetIndex; i++) {
-      const sample = this.samples[i]
-      let waiter!: (frame: VideoFrame | undefined) => void
       const framePromise = new Promise<VideoFrame | undefined>((resolve) => {
-        waiter = resolve
         this.pendingOutputs.push(resolve)
       })
+      framePromises.push(framePromise)
       try {
-        activeDecoder.decode(new EncodedVideoChunk(sample.chunk))
-      } catch {
-        // Decoder already closed by the error callback mid-loop — bail, and
-        // pull our waiter back out so it can't swallow a later output.
-        this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
-        return undefined
-      }
-      const timedOut = Symbol('decode-timeout')
-      const raced = await Promise.race([
-        framePromise,
-        new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), DECODE_TIMEOUT_MS)),
-      ])
-      if (raced === timedOut) {
-        // Neither output nor error ever fired — a genuinely stalled decoder
-        // would otherwise hang this request (and, since decode work is
-        // serialized, every later request for this asset) forever. Reset
-        // and give up on this frame instead; the next request gets a fresh
-        // decoder and a clean reseek.
-        const hwMode = this.hardwareAcceleration
-        this.lastFailureMessage = `decode timed out after ${DECODE_TIMEOUT_MS}ms with no output or error (sample ${i}/${this.samples.length - 1} at ${(sample.timestampMicros / 1_000_000).toFixed(2)}s, key=${sample.isKey}, hw=${hwMode})`
-        this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
+        activeDecoder.decode(new EncodedVideoChunk(this.samples[i].chunk))
+      } catch (e) {
+        this.lastFailureMessage = `decode() threw on sample ${i}/${this.samples.length - 1}: ${e instanceof Error ? e.message : String(e)} (hw=${this.hardwareAcceleration})`
         this.resetAfterFailure()
-        if (hwMode === 'no-preference') {
-          // A hang with zero feedback on the very first decode() call is the
-          // classic signature of a hardware decode session the OS wouldn't
-          // grant — constrained devices cap concurrent hardware decode
-          // sessions system-wide, not just per tab, and a denied session
-          // doesn't error, it just never responds. Software decode
-          // sidesteps that limit entirely, and proxies are downscaled
-          // specifically so software decode is affordable — worth one
-          // transparent retry before surfacing a failure.
+        if (this.hardwareAcceleration === 'no-preference') {
           this.hardwareAcceleration = 'prefer-software'
           return this.decodeTo(targetIndex)
         }
         return undefined
       }
-      const frame = raced
-      // undefined = the decoder hit a fatal error; state was already reset
-      // for the next request to reseek. A hardware decoder can genuinely
-      // reject a stream that software decode handles fine, so this gets the
-      // same one-shot software-fallback retry as a timeout.
+    }
+
+    // Even submitting the whole batch up front isn't enough on its own: the
+    // *last* sample in the batch can still be stuck behind the decoder's
+    // pipeline depth with nothing further queued to flush it out. flush()
+    // is the one WebCodecs operation guaranteed to resolve only once every
+    // decode() call submitted so far has produced its output (or been
+    // discarded) — so it's the actual termination guarantee here, not the
+    // batch submission by itself. The batch submission still matters: it's
+    // what lets the decoder's pipeline fill up enough to produce *any*
+    // output before flush forces the rest out.
+    const hwMode = this.hardwareAcceleration
+    const flushTimedOut = Symbol('flush-timeout')
+    const flushResult = await Promise.race([
+      activeDecoder.flush().then(
+        () => true as const,
+        () => false as const,
+      ),
+      new Promise<typeof flushTimedOut>((resolve) => setTimeout(() => resolve(flushTimedOut), DECODE_TIMEOUT_MS)),
+    ])
+    if (flushResult !== true) {
+      this.lastFailureMessage = `decoder.flush() ${flushResult === false ? 'rejected' : `timed out after ${DECODE_TIMEOUT_MS}ms`} draining batch (samples ${startIndex}-${targetIndex}/${this.samples.length - 1}, hw=${hwMode})`
+      this.resetAfterFailure()
+      if (hwMode === 'no-preference') {
+        // A decoder that can't even drain what it was given is a classic
+        // signature of a hardware decode session the OS wouldn't grant —
+        // constrained devices cap concurrent hardware decode sessions
+        // system-wide, not just per tab, and a denied session doesn't
+        // error, it just never responds. Software decode sidesteps that
+        // limit entirely, and proxies are downscaled specifically so
+        // software decode is affordable — worth one transparent retry
+        // before surfacing a failure.
+        this.hardwareAcceleration = 'prefer-software'
+        return this.decodeTo(targetIndex)
+      }
+      return undefined
+    }
+
+    // Every output for this batch should have arrived by now (or the
+    // decoder hit a fatal error, which resetAfterFailure would have already
+    // settled these promises with `undefined` for). Still race each one
+    // against a short grace-period timeout as a safety net — flush()
+    // resolving is supposed to guarantee this, but shouldn't be trusted
+    // blindly against a non-compliant implementation with no fallback.
+    const DRAIN_GRACE_MS = 500
+    let targetFrame: VideoFrame | undefined
+    for (let idx = 0; idx < framePromises.length; idx++) {
+      const i = startIndex + idx
+      const drainTimedOut = Symbol('drain-timeout')
+      const drained = await Promise.race([
+        framePromises[idx],
+        new Promise<typeof drainTimedOut>((resolve) => setTimeout(() => resolve(drainTimedOut), DRAIN_GRACE_MS)),
+      ])
+      if (drained === drainTimedOut) {
+        this.lastFailureMessage = `flush() resolved but sample ${i}/${this.samples.length - 1} never arrived within ${DRAIN_GRACE_MS}ms after (hw=${hwMode})`
+        this.resetAfterFailure()
+        if (hwMode === 'no-preference') {
+          this.hardwareAcceleration = 'prefer-software'
+          return this.decodeTo(targetIndex)
+        }
+        return undefined
+      }
+      const frame = drained
       if (!frame) {
         if (this.hardwareAcceleration === 'no-preference') {
           this.hardwareAcceleration = 'prefer-software'
