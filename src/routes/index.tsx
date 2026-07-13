@@ -115,9 +115,9 @@ function Gallery() {
 
   return (
     <div className="mx-auto min-h-dvh max-w-6xl px-6 py-8 [padding-top:calc(env(safe-area-inset-top)+2rem)]">
-      <header className="mb-8 flex items-center justify-between">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold">CapCut for iPad</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="lg"

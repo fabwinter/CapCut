@@ -1,10 +1,12 @@
 import { RotateCwIcon, XIcon } from 'lucide-react'
 import { useMemo } from 'react'
 import { Button } from '#/components/ui/button'
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '#/components/ui/drawer'
 import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
 import { Slider } from '#/components/ui/slider'
 import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
+import { useIsMobile } from '#/hooks/use-mobile'
 import { setClipFades, setClipMuted, setClipSpeed, setClipVolume } from '#/editor/doc/commands/clipProperties'
 import { addKeyframe, deleteKeyframe } from '#/editor/doc/commands/keyframes'
 import { setAdjustment, setLut } from '#/editor/doc/commands/effects'
@@ -51,10 +53,15 @@ export function Inspector() {
   const selectedClipId = useEditorStore((s) => s.selectedClipId)
   const playheadMicros = useEditorStore((s) => s.playheadMicros)
   const dispatch = useEditorStore((s) => s.dispatch)
+  const selectClip = useEditorStore((s) => s.selectClip)
+  const isMobile = useIsMobile()
 
   const clip = useMemo(() => (doc && selectedClipId ? findClip(doc, selectedClipId) : undefined), [doc, selectedClipId])
 
   if (!doc || !clip) {
+    // On mobile the inspector is a bottom sheet that only appears once a
+    // clip is selected — there's no room for a permanent placeholder panel.
+    if (isMobile) return null
     return (
       <aside data-inspector className="border-border bg-card/40 flex w-72 shrink-0 items-center justify-center border-l p-4">
         <p className="text-muted-foreground text-center text-xs">Select a clip to edit its properties.</p>
@@ -66,8 +73,8 @@ export function Inspector() {
   const clipLocalPlayhead = Math.max(0, Math.min(clip.durationMicros, playheadMicros - clip.startMicros))
   const lutEffect = clip.effects.find((e) => e.type === 'lut')
 
-  return (
-    <aside data-inspector className="border-border bg-card/40 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3">
+  const sections = (
+    <>
       {clip.text && (
         <Section title="Text">
           <Textarea
@@ -373,6 +380,31 @@ export function Inspector() {
           </ul>
         )}
       </Section>
+    </>
+  )
+
+  if (isMobile) {
+    return (
+      <Drawer
+        open
+        direction="bottom"
+        onOpenChange={(open) => {
+          if (!open) selectClip(null)
+        }}
+      >
+        <DrawerContent data-inspector className="max-h-[75vh]">
+          <DrawerHeader>
+            <DrawerTitle>Clip properties</DrawerTitle>
+          </DrawerHeader>
+          <div className="flex flex-col gap-4 overflow-y-auto px-3 pb-4">{sections}</div>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+
+  return (
+    <aside data-inspector className="border-border bg-card/40 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3">
+      {sections}
     </aside>
   )
 }
