@@ -48,6 +48,15 @@ class AssetDecoderSession {
   private pendingOutputs: ((frame: VideoFrame | undefined) => void)[] = []
   /** The actual reason the most recent decode failed, if any — surfaced to the UI so a failure is diagnosable instead of a generic "couldn't decode". */
   private lastFailureMessage: string | undefined
+  // Constrained devices cap concurrent *hardware* decode sessions system-wide
+  // (not just per-tab) — a decoder that can't get one doesn't error, it just
+  // never calls output or error at all, indistinguishable from any other
+  // hang until it times out. That's exactly what a hardware-session
+  // exhaustion looks like: total silence on the very first decode() call.
+  // After a hang, retry once with software decode forced, which sidesteps
+  // hardware session limits entirely — proxies are already downscaled
+  // specifically so software decode is affordable.
+  private hardwareAcceleration: HardwareAcceleration = 'no-preference'
   // Real playback fires a render request every rAF without waiting for the
   // previous one's decode to finish (Transport.tick's `void renderFrameAt`),
   // and decode round-trips on real hardware routinely outlast one frame
@@ -95,7 +104,7 @@ class AssetDecoderSession {
         // asset permanently (the canvas just keeps its last drawn frame).
         // Settle all waiters empty-handed and drop the decoder so the next
         // request reconfigures and reseeks from a keyframe.
-        this.lastFailureMessage = `decoder error: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height})`
+        this.lastFailureMessage = `decoder error: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height}, hw=${this.hardwareAcceleration})`
         this.resetAfterFailure()
       },
     })
@@ -105,9 +114,10 @@ class AssetDecoderSession {
         codedWidth: info.width,
         codedHeight: info.height,
         description: info.description,
+        hardwareAcceleration: this.hardwareAcceleration,
       })
     } catch (e) {
-      this.lastFailureMessage = `configure() rejected: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height})`
+      this.lastFailureMessage = `configure() rejected: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height}, hw=${this.hardwareAcceleration})`
       throw e
     }
     this.decoder = decoder
@@ -257,15 +267,36 @@ class AssetDecoderSession {
         // serialized, every later request for this asset) forever. Reset
         // and give up on this frame instead; the next request gets a fresh
         // decoder and a clean reseek.
-        this.lastFailureMessage = `decode timed out after ${DECODE_TIMEOUT_MS}ms with no output or error (sample ${i}/${this.samples.length - 1} at ${(sample.timestampMicros / 1_000_000).toFixed(2)}s, key=${sample.isKey})`
+        const hwMode = this.hardwareAcceleration
+        this.lastFailureMessage = `decode timed out after ${DECODE_TIMEOUT_MS}ms with no output or error (sample ${i}/${this.samples.length - 1} at ${(sample.timestampMicros / 1_000_000).toFixed(2)}s, key=${sample.isKey}, hw=${hwMode})`
         this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
         this.resetAfterFailure()
+        if (hwMode === 'no-preference') {
+          // A hang with zero feedback on the very first decode() call is the
+          // classic signature of a hardware decode session the OS wouldn't
+          // grant — constrained devices cap concurrent hardware decode
+          // sessions system-wide, not just per tab, and a denied session
+          // doesn't error, it just never responds. Software decode
+          // sidesteps that limit entirely, and proxies are downscaled
+          // specifically so software decode is affordable — worth one
+          // transparent retry before surfacing a failure.
+          this.hardwareAcceleration = 'prefer-software'
+          return this.decodeTo(targetIndex)
+        }
         return undefined
       }
       const frame = raced
       // undefined = the decoder hit a fatal error; state was already reset
-      // for the next request to reseek. Give up on this frame.
-      if (!frame) return undefined
+      // for the next request to reseek. A hardware decoder can genuinely
+      // reject a stream that software decode handles fine, so this gets the
+      // same one-shot software-fallback retry as a timeout.
+      if (!frame) {
+        if (this.hardwareAcceleration === 'no-preference') {
+          this.hardwareAcceleration = 'prefer-software'
+          return this.decodeTo(targetIndex)
+        }
+        return undefined
+      }
       this.decodedUpToIndex = i
       if (i === targetIndex) {
         targetFrame = frame
