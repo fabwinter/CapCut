@@ -1,12 +1,81 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { PlayIcon, PauseIcon, StepBackIcon, StepForwardIcon, SkipBackIcon, SkipForwardIcon } from 'lucide-react'
-import type { ProjectDoc } from '#/editor/doc/schema'
+import type { ProjectDoc, Effect } from '#/editor/doc/schema'
 import type { Micros } from '#/editor/doc/time'
 import { microsToSeconds, secondsToMicros } from '#/editor/doc/time'
 import { Compositor } from '#/editor/playback/compositor'
 import { Transport } from '#/editor/playback/transport'
 import { FrameSource } from '#/editor/media/frameSource'
 import { Button } from '#/components/ui/button'
+
+/**
+ * Apply effects to a video frame using canvas processing.
+ * Creates a new VideoFrame with effects applied.
+ */
+function applyEffectsToFrame(frame: VideoFrame, effects: Effect[], width: number, height: number): VideoFrame {
+  // Create canvas and draw the video frame
+  const canvas = new OffscreenCanvas(frame.displayWidth || width, frame.displayHeight || height)
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return frame
+  }
+
+  // Draw the original frame
+  ctx.drawImage(frame as any, 0, 0)
+
+  // Get image data to manipulate pixels
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const data = imageData.data
+
+  // Apply each effect
+  for (const effect of effects) {
+    switch (effect.type) {
+      case 'brightness': {
+        const amount = effect.params.amount ?? 0
+        for (let i = 0; i < data.length; i += 4) {
+          data[i] = Math.min(255, data[i] + amount * 255)
+          data[i + 1] = Math.min(255, data[i + 1] + amount * 255)
+          data[i + 2] = Math.min(255, data[i + 2] + amount * 255)
+        }
+        break
+      }
+      case 'contrast': {
+        const factor = effect.params.factor ?? 1
+        for (let i = 0; i < data.length; i += 4) {
+          data[i] = Math.min(255, Math.max(0, (data[i] - 128) * factor + 128))
+          data[i + 1] = Math.min(255, Math.max(0, (data[i + 1] - 128) * factor + 128))
+          data[i + 2] = Math.min(255, Math.max(0, (data[i + 2] - 128) * factor + 128))
+        }
+        break
+      }
+      case 'saturation': {
+        const amount = effect.params.amount ?? 0
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i]
+          const g = data[i + 1]
+          const b = data[i + 2]
+          const gray = r * 0.299 + g * 0.587 + b * 0.114
+          data[i] = Math.min(255, Math.max(0, gray + (r - gray) * (1 + amount)))
+          data[i + 1] = Math.min(255, Math.max(0, gray + (g - gray) * (1 + amount)))
+          data[i + 2] = Math.min(255, Math.max(0, gray + (b - gray) * (1 + amount)))
+        }
+        break
+      }
+      // TODO: Implement temperature, vignette, lut effects
+    }
+  }
+
+  // Put modified image data back
+  ctx.putImageData(imageData, 0, 0)
+
+  // Create new VideoFrame from modified canvas
+  const effectsFrame = new VideoFrame(canvas as any, {
+    timestamp: frame.timestamp ?? 0,
+    duration: frame.duration ?? 0,
+  })
+
+  return effectsFrame
+}
 
 interface PreviewCanvasProps {
   doc: ProjectDoc
@@ -158,8 +227,18 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
                     const scaleY = height / (frame.displayHeight || height)
                     const scale = Math.min(scaleX, scaleY)
 
+                    // Apply effects to frame if present
+                    let effectsFrame = frame
+                    if (clip.effects && clip.effects.length > 0) {
+                      try {
+                        effectsFrame = applyEffectsToFrame(frame, clip.effects, width, height)
+                      } catch (err) {
+                        console.error('Failed to apply effects:', err)
+                      }
+                    }
+
                     compositor.renderClip({
-                      videoFrame: frame,
+                      videoFrame: effectsFrame,
                       opacity: clip.transform.opacity,
                       x: clip.transform.x,
                       y: clip.transform.y,
