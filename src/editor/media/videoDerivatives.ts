@@ -50,13 +50,14 @@ function scaledDimensions(width: number, height: number, maxDimension: number): 
  * can hang forever instead of failing. Checking `isConfigSupported()` first
  * turns that into a fast, clear error.
  */
-async function assertCodecsSupported(
+export async function assertCodecsSupported(
   info: { videoCodec?: string; width?: number; height?: number; fps?: number },
   options: VideoDerivativesOptions,
 ): Promise<void> {
   if (!info.videoCodec || !info.width || !info.height) throw new Error('No video track found')
+  const proxyDims = scaledDimensions(info.width, info.height, options.proxyMaxDimension)
 
-  const [decodeSupport, encodeSupport] = await Promise.all([
+  const [decodeSupport, encodeSupport, proxyDecodeSupport] = await Promise.all([
     VideoDecoder.isConfigSupported({
       codec: info.videoCodec,
       codedWidth: info.width,
@@ -69,12 +70,25 @@ async function assertCodecsSupported(
       bitrate: options.proxyBitrate,
       framerate: info.fps ?? 30,
     }),
+    // Encode support alone isn't enough — playback later decodes this exact
+    // proxy stream (frameSource.ts), and a device can support encoding a
+    // codec/profile it can't decode back (or can't decode at this specific
+    // resolution). Checked unchecked, that gap turns into a proxy that
+    // imports fine but silently fails to ever produce a preview frame.
+    VideoDecoder.isConfigSupported({
+      codec: options.proxyCodec,
+      codedWidth: proxyDims.width,
+      codedHeight: proxyDims.height,
+    }),
   ])
   if (!decodeSupport.supported) {
     throw new Error(`This device cannot decode video codec "${info.videoCodec}"`)
   }
   if (!encodeSupport.supported) {
     throw new Error(`This device cannot encode proxy codec "${options.proxyCodec}"`)
+  }
+  if (!proxyDecodeSupport.supported) {
+    throw new Error(`This device can encode proxy codec "${options.proxyCodec}" but cannot decode it back at ${proxyDims.width}x${proxyDims.height} — cannot generate a playable proxy`)
   }
 }
 

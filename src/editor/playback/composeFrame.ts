@@ -87,7 +87,8 @@ async function resolveClipSource(
     const frame = await resources.frameSources.getFrame(asset.id, file, localMicros, resources.isStale)
     if (!frame) {
       if (!resources.isStale?.()) {
-        reportClipError(clip.id, 'Video frame could not be decoded (timed out or the decoder reported an error).')
+        const detail = resources.frameSources.getLastFailureMessage(asset.id)
+        reportClipError(clip.id, detail ? `Video frame could not be decoded: ${detail}` : 'Video frame could not be decoded (no further detail available).')
       }
       return undefined
     }

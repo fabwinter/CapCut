@@ -46,6 +46,8 @@ class AssetDecoderSession {
   private cacheBytes = 0
   private readonly loaded: Promise<void>
   private pendingOutputs: ((frame: VideoFrame | undefined) => void)[] = []
+  /** The actual reason the most recent decode failed, if any — surfaced to the UI so a failure is diagnosable instead of a generic "couldn't decode". */
+  private lastFailureMessage: string | undefined
   // Real playback fires a render request every rAF without waiting for the
   // previous one's decode to finish (Transport.tick's `void renderFrameAt`),
   // and decode round-trips on real hardware routinely outlast one frame
@@ -86,24 +88,35 @@ class AssetDecoderSession {
         if (cb) cb(frame)
         else frame.close()
       },
-      error: () => {
+      error: (e) => {
         // A fatal decoder error would otherwise leave every in-flight
         // getFrameAt waiter pending forever — and since decode work is
         // serialized per session, that would freeze frame delivery for this
         // asset permanently (the canvas just keeps its last drawn frame).
         // Settle all waiters empty-handed and drop the decoder so the next
         // request reconfigures and reseeks from a keyframe.
+        this.lastFailureMessage = `decoder error: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height})`
         this.resetAfterFailure()
       },
     })
-    decoder.configure({
-      codec: info.codec,
-      codedWidth: info.width,
-      codedHeight: info.height,
-      description: info.description,
-    })
+    try {
+      decoder.configure({
+        codec: info.codec,
+        codedWidth: info.width,
+        codedHeight: info.height,
+        description: info.description,
+      })
+    } catch (e) {
+      this.lastFailureMessage = `configure() rejected: ${e instanceof Error ? e.message : String(e)} (codec=${info.codec}, ${info.width}x${info.height})`
+      throw e
+    }
     this.decoder = decoder
     return decoder
+  }
+
+  /** The actual reason the most recent decode failed — see `lastFailureMessage`. */
+  getLastFailureMessage(): string | undefined {
+    return this.lastFailureMessage
   }
 
   /** Settles every pending waiter empty-handed and drops the decoder so the next request reconfigures and reseeks from a keyframe. Shared by the decoder's fatal-error callback and a stalled-decode timeout. */
@@ -244,6 +257,7 @@ class AssetDecoderSession {
         // serialized, every later request for this asset) forever. Reset
         // and give up on this frame instead; the next request gets a fresh
         // decoder and a clean reseek.
+        this.lastFailureMessage = `decode timed out after ${DECODE_TIMEOUT_MS}ms with no output or error (sample ${i}/${this.samples.length - 1} at ${(sample.timestampMicros / 1_000_000).toFixed(2)}s, key=${sample.isKey})`
         this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
         this.resetAfterFailure()
         return undefined
@@ -307,6 +321,11 @@ export class FrameSourceManager {
       this.sessions.set(assetId, session)
     }
     return session.getFrameAt(timestampMicros, isStale)
+  }
+
+  /** The actual reason `getFrame` most recently returned undefined for `assetId` — see `AssetDecoderSession.lastFailureMessage`. */
+  getLastFailureMessage(assetId: string): string | undefined {
+    return this.sessions.get(assetId)?.getLastFailureMessage()
   }
 
   closeAll(): void {
