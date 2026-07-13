@@ -212,31 +212,42 @@ export class FrameSource {
 
       // Seek to the requested time (in seconds)
       const timeSeconds = snappedTime / 1_000_000
-      video.currentTime = timeSeconds
 
       // Wait for the frame to be available
       await new Promise<void>((resolve, reject) => {
+        let resolved = false
+
         const handler = () => {
+          if (resolved) return
+          resolved = true
           video.removeEventListener('seeked', handler)
           video.removeEventListener('error', errorHandler)
+          clearTimeout(timeout)
           resolve()
         }
+
         const errorHandler = () => {
+          if (resolved) return
+          resolved = true
           video.removeEventListener('seeked', handler)
           video.removeEventListener('error', errorHandler)
+          clearTimeout(timeout)
           reject(new Error('Failed to seek to frame'))
         }
-        video.addEventListener('seeked', handler, { once: true })
-        video.addEventListener('error', errorHandler, { once: true })
 
-        // Set a timeout in case seek never completes
         const timeout = setTimeout(() => {
+          if (resolved) return
+          resolved = true
           video.removeEventListener('seeked', handler)
           video.removeEventListener('error', errorHandler)
           reject(new Error('Seek timeout'))
         }, 5000)
 
-        video.addEventListener('seeked', () => clearTimeout(timeout), { once: true })
+        video.addEventListener('seeked', handler, { once: true })
+        video.addEventListener('error', errorHandler, { once: true })
+
+        // Trigger the seek
+        video.currentTime = timeSeconds
       })
 
       // Create a canvas to draw the video frame
