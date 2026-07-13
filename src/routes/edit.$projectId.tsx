@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
+import { Timeline } from '#/components/editor/Timeline'
 import { renameProject } from '#/editor/doc/commands/project'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { loadProject } from '#/storage/idb'
@@ -113,11 +114,7 @@ function Editor() {
             </div>
           </div>
 
-          <div className="border-border bg-card/40 h-56 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)]">
-            <div className="text-muted-foreground flex h-full items-center justify-center text-xs">
-              Timeline — Phase 3 ({doc.tracks.length} tracks)
-            </div>
-          </div>
+          <Timeline doc={doc} />
         </div>
       </main>
     </div>
