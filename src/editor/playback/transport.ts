@@ -2,6 +2,7 @@ import { projectDurationMicros, type ProjectDoc, type Transform } from '#/editor
 import type { Micros } from '#/editor/doc/time'
 import { readOriginal, readProxy } from '#/editor/media/assetStorage'
 import { computeGainEnvelope } from './audioEnvelope'
+import { coalesceLatest } from './coalesceLatest'
 import { composeFrame } from './composeFrame'
 import { Compositor } from './compositor/gl'
 import { FrameSourceManager } from './frameSource'
@@ -32,6 +33,16 @@ export class Transport {
   private playStartCtxTime = 0
   private playStartMicros = 0
   private rafHandle: number | undefined
+  // Guards against a livelock: without it, tick() firing a new renderFrameAt
+  // every rAF regardless of whether the previous one finished means that on
+  // real hardware — where a video decode takes longer than one frame
+  // interval — every call is superseded (isStale) by the time its decode
+  // completes, so composeFrame discards the frame before ever drawing it.
+  // Forever. Coalescing to "at most one render in flight, always for the
+  // freshest playhead position" trades video frame rate for decode
+  // throughput instead of livelocking; audio (the master clock) is
+  // unaffected either way.
+  private readonly renderLatest = coalesceLatest((micros: Micros) => this.renderFrameAt(micros))
   private lastCanvasSize = { width: 0, height: 0 }
   private renderGeneration = 0
   /** Live drag/pinch preview for a clip's transform, layered on top of the doc without touching it — see `setTransformOverride`. */
@@ -231,11 +242,11 @@ export class Transport {
     if (micros >= duration) {
       this.pause()
       this.callbacks.onTick?.(duration)
-      void this.renderFrameAt(duration)
+      this.renderLatest(duration)
       return
     }
     this.callbacks.onTick?.(micros)
-    void this.renderFrameAt(micros)
+    this.renderLatest(micros)
     this.rafHandle = requestAnimationFrame(() => this.tick())
   }
 
