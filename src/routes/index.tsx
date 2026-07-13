@@ -30,6 +30,7 @@ import {
 } from '#/components/ui/dropdown-menu'
 import { Input } from '#/components/ui/input'
 import { StorageMeter } from '#/components/StorageMeter'
+import { ASPECT_RATIO_PRESETS } from '#/editor/doc/aspectRatioPresets'
 import { projectDurationMicros, type ProjectDoc } from '#/editor/doc/schema'
 import { microsToSeconds } from '#/editor/doc/time'
 import { exportProjectBackup, restoreProjectBackup } from '#/storage/backup'
@@ -51,6 +52,8 @@ function Gallery() {
 
   const [createOpen, setCreateOpen] = useState(false)
   const [newName, setNewName] = useState('')
+  // undefined = "Auto" — the project takes its dimensions/fps from the first video imported (see MediaLibrary's auto-detect), rather than a fixed preset.
+  const [newAspectRatio, setNewAspectRatio] = useState<(typeof ASPECT_RATIO_PRESETS)[number] | undefined>(undefined)
   const [renameTarget, setRenameTarget] = useState<ProjectDoc | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<ProjectDoc | null>(null)
@@ -86,10 +89,14 @@ function Gallery() {
   async function handleCreate() {
     const name = newName.trim() || 'Untitled Project'
     setBusy(true)
-    const doc = await createProject(name)
+    const doc = await createProject(
+      name,
+      newAspectRatio ? { width: newAspectRatio.width, height: newAspectRatio.height } : undefined,
+    )
     setBusy(false)
     setCreateOpen(false)
     setNewName('')
+    setNewAspectRatio(undefined)
     navigate({ to: '/edit/$projectId', params: { projectId: doc.id } })
   }
 
@@ -242,6 +249,30 @@ function Gallery() {
             className="h-11 text-sm"
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
           />
+          <div>
+            <p className="text-muted-foreground mb-1.5 text-xs font-medium">Aspect ratio</p>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                size="sm"
+                variant={!newAspectRatio ? 'default' : 'outline'}
+                data-aspect-ratio="auto"
+                onClick={() => setNewAspectRatio(undefined)}
+              >
+                Auto (from video)
+              </Button>
+              {ASPECT_RATIO_PRESETS.map((preset) => (
+                <Button
+                  key={preset.label}
+                  size="sm"
+                  variant={newAspectRatio?.label === preset.label ? 'default' : 'outline'}
+                  data-aspect-ratio={preset.label}
+                  onClick={() => setNewAspectRatio(preset)}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+          </div>
           <DialogFooter>
             <Button variant="outline" className="h-10" onClick={() => setCreateOpen(false)}>
               Cancel

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import { addClip, createClip } from '#/editor/doc/commands/clips'
+import { setProjectSettings } from '#/editor/doc/commands/project'
 import { addTrack } from '#/editor/doc/commands/tracks'
 import type { Command } from '#/editor/doc/commands/types'
 import type { AssetRef, ProjectDoc, TrackKind } from '#/editor/doc/schema'
@@ -38,6 +39,26 @@ function addAssetToTimeline(doc: ProjectDoc, asset: AssetRef, dispatch: (command
   dispatch(addClip(createClip({ trackId: track.id, assetId: asset.id, startMicros, durationMicros })))
 }
 
+/**
+ * Sets the project's canvas dimensions and frame rate from the first video
+ * imported into an otherwise-untouched project, instead of always defaulting
+ * to a fixed portrait preset regardless of what the user actually shoots
+ * with. Deliberately conservative: only fires when the timeline is
+ * completely empty and this is the only video asset seen so far, so it
+ * can't clobber a project the user has already started editing, or fight
+ * with itself when several videos are imported in the same batch.
+ */
+export function autoDetectProjectSettings(doc: ProjectDoc, assetId: string, dispatch: (command: Command) => void): void {
+  const asset = doc.assets.find((a) => a.id === assetId)
+  if (!asset || asset.kind !== 'video' || !asset.width || !asset.height) return
+
+  const timelineIsEmpty = doc.tracks.every((t) => t.clips.length === 0)
+  const isOnlyVideoAsset = doc.assets.filter((a) => a.kind === 'video').length === 1
+  if (!timelineIsEmpty || !isOnlyVideoAsset) return
+
+  dispatch(setProjectSettings({ width: asset.width, height: asset.height, fps: asset.fps ?? doc.settings.fps }))
+}
+
 interface MediaLibraryProps {
   projectId: string
 }
@@ -50,9 +71,14 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
   function handleFiles(files: FileList | null) {
     if (!files) return
     for (const file of Array.from(files)) {
-      importMediaFile(projectId, file, dispatch).catch((err: unknown) => {
-        console.error('Import failed', err)
-      })
+      importMediaFile(projectId, file, dispatch)
+        .then((assetId) => {
+          const freshDoc = useEditorStore.getState().doc
+          if (freshDoc) autoDetectProjectSettings(freshDoc, assetId, dispatch)
+        })
+        .catch((err: unknown) => {
+          console.error('Import failed', err)
+        })
     }
   }
 
