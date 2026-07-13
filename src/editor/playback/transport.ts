@@ -70,6 +70,12 @@ export class Transport {
     this.isLooping = enabled
   }
 
+  setMasterVolume(volume: number): void {
+    if (this.masterGain) {
+      this.masterGain.gain.value = Math.max(0, Math.min(1, volume))
+    }
+  }
+
   private ensureCanvasSize(doc: ProjectDoc): void {
     if (this.lastCanvasSize.width === doc.settings.width && this.lastCanvasSize.height === doc.settings.height) return
     this.compositor.resize(doc.settings.width, doc.settings.height)
