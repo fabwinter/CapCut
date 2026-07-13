@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer'
-import { demuxVideoTrack, probeContainer, type VideoTrackInfo } from './demux'
+import { demuxVideoTrack, probeContainer, type VideoRotation, type VideoTrackInfo } from './demux'
 
 export interface VideoDerivativesOptions {
   /** Longest edge of the generated proxy, in pixels. */
@@ -35,6 +35,44 @@ function scaledDimensions(width: number, height: number, maxDimension: number): 
   const w = Math.max(2, Math.round((width * scale) / 2) * 2)
   const h = Math.max(2, Math.round((height * scale) / 2) * 2)
   return { width: w, height: h }
+}
+
+/**
+ * Draws a decoded (raw, pre-rotation) source frame into a `w x h` canvas
+ * already sized for the *display* (post-rotation) orientation, applying
+ * whatever clockwise rotation the source track's display matrix calls for.
+ * This bakes the correction in once, here, at proxy/thumbnail generation
+ * time — everything downstream (playback, export) draws the proxy's pixels
+ * as-is and never needs to know rotation was ever a thing.
+ */
+export function drawRotatedFrame(
+  ctx: OffscreenCanvasRenderingContext2D,
+  source: CanvasImageSource,
+  rotation: VideoRotation,
+  outWidth: number,
+  outHeight: number,
+): void {
+  const swapped = rotation === 90 || rotation === 270
+  const drawWidth = swapped ? outHeight : outWidth
+  const drawHeight = swapped ? outWidth : outHeight
+
+  ctx.save()
+  switch (rotation) {
+    case 90:
+      ctx.translate(outWidth, 0)
+      ctx.rotate(Math.PI / 2)
+      break
+    case 180:
+      ctx.translate(outWidth, outHeight)
+      ctx.rotate(Math.PI)
+      break
+    case 270:
+      ctx.translate(0, outHeight)
+      ctx.rotate(-Math.PI / 2)
+      break
+  }
+  ctx.drawImage(source, 0, 0, drawWidth, drawHeight)
+  ctx.restore()
 }
 
 /**
@@ -117,8 +155,13 @@ export async function generateVideoDerivatives(
   await demuxVideoTrack(file, {
     onTrackInfo: (info) => {
       sourceInfo = info
-      proxyDims = scaledDimensions(info.width, info.height, options.proxyMaxDimension)
-      thumbDims = scaledDimensions(info.width, info.height, options.thumbnailMaxDimension)
+      // info.width/height are raw coded (pre-rotation) dims; the proxy and
+      // thumbnails are output at *display* orientation, so a 90°/270°
+      // rotation swaps which edge is scaled to the max-dimension cap.
+      const displayWidth = info.rotation === 90 || info.rotation === 270 ? info.height : info.width
+      const displayHeight = info.rotation === 90 || info.rotation === 270 ? info.width : info.height
+      proxyDims = scaledDimensions(displayWidth, displayHeight, options.proxyMaxDimension)
+      thumbDims = scaledDimensions(displayWidth, displayHeight, options.thumbnailMaxDimension)
 
       const proxyCanvas = new OffscreenCanvas(proxyDims.width, proxyDims.height)
       const ctx = proxyCanvas.getContext('2d')
@@ -153,7 +196,7 @@ export async function generateVideoDerivatives(
       decoder = new VideoDecoder({
         output: (frame) => {
           try {
-            proxyCtx.drawImage(frame, 0, 0, proxyDims.width, proxyDims.height)
+            drawRotatedFrame(proxyCtx, frame, info.rotation, proxyDims.width, proxyDims.height)
             const scaledFrame = new VideoFrame(proxyCanvas, {
               timestamp: frame.timestamp,
               duration: frame.duration ?? undefined,
@@ -162,7 +205,7 @@ export async function generateVideoDerivatives(
             scaledFrame.close()
 
             if (frame.timestamp >= nextThumbnailAt) {
-              thumbCtx.drawImage(frame, 0, 0, thumbDims.width, thumbDims.height)
+              drawRotatedFrame(thumbCtx, frame, info.rotation, thumbDims.width, thumbDims.height)
               const index = thumbnails.length
               thumbnails.push(new Blob())
               thumbnailPromises.push(
