@@ -66,7 +66,7 @@ async function resolveClipSource(
   }
   if (asset.kind === 'video' && asset.proxy) {
     const file = await resources.getProxyFile(asset.id)
-    const frame = await resources.frameSources.getFrame(asset.id, file, localMicros)
+    const frame = await resources.frameSources.getFrame(asset.id, file, localMicros, resources.isStale)
     if (!frame) return undefined
     framesToClose.push(frame)
     return { source: frame, width: frame.codedWidth, height: frame.codedHeight }
