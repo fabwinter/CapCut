@@ -186,7 +186,16 @@ export class Compositor {
     // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- standard unit-quad texcoords for two triangles (TL,TR,BR / TL,BR,BL)
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1]), gl.STATIC_DRAW)
 
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
+    // Deliberately *not* flipped: `ImageBitmap` sources (images) ignore this
+    // flag entirely, but `VideoFrame` and `OffscreenCanvas` sources (video
+    // frames, rasterized text) respect it — so flipping here to make images
+    // upright would flip video and text upside down instead (confirmed via
+    // a real gl.readPixels probe: with this flag true, an OffscreenCanvas or
+    // VideoFrame source with a red top / blue bottom renders blue-on-top).
+    // Leaving it at the WebGL default (false) renders every source type in
+    // its natural top-row-first orientation, matching the quad/texcoord
+    // mapping below — correct for all three source types uniformly.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     if (this.canvasWidth > 0 && this.canvasHeight > 0) gl.viewport(0, 0, this.canvasWidth, this.canvasHeight)
@@ -246,9 +255,7 @@ export class Compositor {
     // edge, so linear filtering would blend across cell/slice boundaries.
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true)
     gl.activeTexture(gl.TEXTURE0)
     this.lutTextures.set(lutId, texture)
     return texture
