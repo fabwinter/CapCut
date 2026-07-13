@@ -43,6 +43,7 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
   const gestureRef = useRef<ManipulateGesture | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [selectionQuad, setSelectionQuad] = useState<Quad | undefined>(undefined)
+  const [renderError, setRenderError] = useState<string | undefined>(undefined)
 
   const selectedClipId = useEditorStore((s) => s.selectedClipId)
   const playheadMicros = useEditorStore((s) => s.playheadMicros)
@@ -55,6 +56,10 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
     const transport = new Transport(projectId, () => useEditorStore.getState().doc!, canvas, {
       onTick: (micros) => useEditorStore.getState().setPlayhead(micros),
       onPlayStateChange: (playing) => setIsPlaying(playing),
+      onRenderError: (_clipId, message) => setRenderError(message),
+      onFrameRendered: (hadError) => {
+        if (!hadError) setRenderError(undefined)
+      },
     })
     transportRef.current = transport
     return () => {
@@ -257,6 +262,14 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
                   vectorEffect="non-scaling-stroke"
                 />
               </svg>
+            )}
+            {renderError && (
+              <div
+                data-render-error
+                className="pointer-events-none absolute inset-x-2 bottom-2 rounded bg-destructive/90 px-2 py-1 text-[0.6875rem] text-destructive-foreground"
+              >
+                {renderError}
+              </div>
             )}
           </div>
         </div>

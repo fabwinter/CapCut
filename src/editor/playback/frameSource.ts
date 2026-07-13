@@ -25,6 +25,18 @@ function estimateFrameBytes(width: number, height: number): number {
   return width * height * 4
 }
 
+/**
+ * How long to wait for a single decode() to produce an output or error
+ * before giving up on it. WebCodecs doesn't guarantee either callback fires
+ * for every stall mode a real device can hit (background/backgrounding,
+ * thermal throttling, a genuinely wedged hardware decoder) — and because
+ * decode work is serialized per session (see `queue`), one hung decode
+ * would otherwise block every later request for this asset forever, and by
+ * extension freeze the whole render pipeline once render calls are
+ * coalesced to "at most one in flight" (see Transport.renderLatest).
+ */
+const DECODE_TIMEOUT_MS = 4000
+
 class AssetDecoderSession {
   private samples: Sample[] = []
   private trackInfo: VideoTrackInfo | undefined
@@ -81,16 +93,7 @@ class AssetDecoderSession {
         // asset permanently (the canvas just keeps its last drawn frame).
         // Settle all waiters empty-handed and drop the decoder so the next
         // request reconfigures and reseeks from a keyframe.
-        const pending = this.pendingOutputs
-        this.pendingOutputs = []
-        for (const cb of pending) cb(undefined)
-        try {
-          this.decoder?.close()
-        } catch {
-          // Already closed by the UA after the fatal error.
-        }
-        this.decoder = undefined
-        this.decodedUpToIndex = -1
+        this.resetAfterFailure()
       },
     })
     decoder.configure({
@@ -101,6 +104,20 @@ class AssetDecoderSession {
     })
     this.decoder = decoder
     return decoder
+  }
+
+  /** Settles every pending waiter empty-handed and drops the decoder so the next request reconfigures and reseeks from a keyframe. Shared by the decoder's fatal-error callback and a stalled-decode timeout. */
+  private resetAfterFailure(): void {
+    const pending = this.pendingOutputs
+    this.pendingOutputs = []
+    for (const cb of pending) cb(undefined)
+    try {
+      this.decoder?.close()
+    } catch {
+      // Already closed by the UA, or by the error that triggered this reset.
+    }
+    this.decoder = undefined
+    this.decodedUpToIndex = -1
   }
 
   private findSampleIndex(timestampMicros: number): number {
@@ -216,7 +233,22 @@ class AssetDecoderSession {
         this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
         return undefined
       }
-      const frame = await framePromise
+      const timedOut = Symbol('decode-timeout')
+      const raced = await Promise.race([
+        framePromise,
+        new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), DECODE_TIMEOUT_MS)),
+      ])
+      if (raced === timedOut) {
+        // Neither output nor error ever fired — a genuinely stalled decoder
+        // would otherwise hang this request (and, since decode work is
+        // serialized, every later request for this asset) forever. Reset
+        // and give up on this frame instead; the next request gets a fresh
+        // decoder and a clean reseek.
+        this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
+        this.resetAfterFailure()
+        return undefined
+      }
+      const frame = raced
       // undefined = the decoder hit a fatal error; state was already reset
       // for the next request to reseek. Give up on this frame.
       if (!frame) return undefined

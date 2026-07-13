@@ -47,6 +47,23 @@ export interface ComposeFrameResources {
   transformOverrides?: Map<string, Partial<Transform>>
   /** Checked after every await — if it returns true, composition bails out without touching the canvas (a newer call superseded this one). Omit for sequential, non-racing callers like the exporter. */
   isStale?: () => boolean
+  /**
+   * A clip that should be visible produced nothing to draw — a decode
+   * failure/timeout, a thrown exception, or similar. Without this, those
+   * failures were silently swallowed (console.error at best) and the canvas
+   * just stayed on whatever it last drew, indistinguishable from "still
+   * loading" or a layout bug. Not called for expected non-failures (asset
+   * still importing, clip has no media, etc).
+   */
+  onClipError?: (clipId: string, message: string) => void
+  /**
+   * Fires once per completed (non-stale) composeFrame call with whether any
+   * clip errored this frame — lets a caller clear a previously-shown error
+   * banner exactly when a frame actually finishes drawing cleanly, instead
+   * of on every animation-frame tick regardless of whether this frame's
+   * render even succeeded.
+   */
+  onFrameRendered?: (hadError: boolean) => void
 }
 
 async function resolveClipSource(
@@ -55,6 +72,7 @@ async function resolveClipSource(
   localMicros: Micros,
   framesToClose: VideoFrame[],
   resources: ComposeFrameResources,
+  reportClipError: (clipId: string, message: string) => void,
 ): Promise<{ source: TexImageSource; width: number; height: number } | undefined> {
   if (!clip.assetId) return undefined
   const asset = doc.assets.find((a) => a.id === clip.assetId)
@@ -67,7 +85,12 @@ async function resolveClipSource(
   if (asset.kind === 'video' && asset.proxy) {
     const file = await resources.getProxyFile(asset.id)
     const frame = await resources.frameSources.getFrame(asset.id, file, localMicros, resources.isStale)
-    if (!frame) return undefined
+    if (!frame) {
+      if (!resources.isStale?.()) {
+        reportClipError(clip.id, 'Video frame could not be decoded (timed out or the decoder reported an error).')
+      }
+      return undefined
+    }
     framesToClose.push(frame)
     return { source: frame, width: frame.codedWidth, height: frame.codedHeight }
   }
@@ -90,6 +113,11 @@ export async function composeFrame(
 ): Promise<void> {
   const stale = () => resources.isStale?.() ?? false
   const [r, g, b] = hexToRgb01(doc.settings.background)
+  let hadError = false
+  const reportClipError = (clipId: string, message: string) => {
+    hadError = true
+    resources.onClipError?.(clipId, message)
+  }
 
   const active = findActiveClips(doc, atMicros)
   const framesToClose: VideoFrame[] = []
@@ -140,7 +168,7 @@ export async function composeFrame(
         )
         draws.push({ slotKey: clip.id, source: raster, quad, opacity: transform.opacity * mod.opacityMul, adjustments, lut })
       } else {
-        const resolved = await resolveClipSource(doc, clip, localMicros, framesToClose, resources)
+        const resolved = await resolveClipSource(doc, clip, localMicros, framesToClose, resources, reportClipError)
         if (stale()) return
         if (resolved) {
           const quad = computeQuadCorners(transform, resolved.width, resolved.height, doc.settings.width, doc.settings.height)
@@ -179,7 +207,7 @@ export async function composeFrame(
 
             const nextResolved = next.text
               ? { source: rasterizeText(next.text, doc.settings.width, doc.settings.height), width: doc.settings.width, height: doc.settings.height }
-              : await resolveClipSource(doc, next, next.inPointMicros, framesToClose, resources)
+              : await resolveClipSource(doc, next, next.inPointMicros, framesToClose, resources, reportClipError)
             if (stale()) return
             if (nextResolved) {
               const nextQuad = computeQuadCorners(
@@ -206,6 +234,7 @@ export async function composeFrame(
       }
     } catch (err) {
       console.error('Failed to render clip', clip.id, err)
+      reportClipError(clip.id, err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -221,4 +250,5 @@ export async function composeFrame(
     if (draw.scissor) compositor.clearScissor()
   }
   for (const frame of framesToClose) frame.close()
+  resources.onFrameRendered?.(hadError)
 }

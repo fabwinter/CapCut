@@ -10,6 +10,10 @@ import { FrameSourceManager } from './frameSource'
 export interface TransportCallbacks {
   onTick?: (micros: Micros) => void
   onPlayStateChange?: (playing: boolean) => void
+  /** A visible clip failed to render this frame — see composeFrame's `onClipError`. */
+  onRenderError?: (clipId: string, message: string) => void
+  /** Fires once per completed render with whether any clip errored — see composeFrame's `onFrameRendered`. */
+  onFrameRendered?: (hadError: boolean) => void
 }
 
 /**
@@ -110,6 +114,8 @@ export class Transport {
       frameSources: this.frameSources,
       transformOverrides: this.transformOverrides,
       isStale: () => generation !== this.renderGeneration,
+      onClipError: (clipId, message) => this.callbacks.onRenderError?.(clipId, message),
+      onFrameRendered: (hadError) => this.callbacks.onFrameRendered?.(hadError),
     })
   }
 
