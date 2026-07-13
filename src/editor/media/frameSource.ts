@@ -86,7 +86,12 @@ class VideoElementCache {
   private videoElements = new Map<string, HTMLVideoElement>()
 
   private async createVideoElement(projectId: string, assetId: string): Promise<HTMLVideoElement> {
-    const video = new (typeof globalThis !== 'undefined' && (globalThis as any).HTMLVideoElement || HTMLVideoElement)()
+    // Create video element in browser context
+    if (typeof document === 'undefined') {
+      throw new Error('Frame extraction not available in non-browser context')
+    }
+
+    const video = document.createElement('video')
     video.crossOrigin = 'anonymous'
     video.style.display = 'none'
 
@@ -234,18 +239,28 @@ export class FrameSource {
         video.addEventListener('seeked', () => clearTimeout(timeout), { once: true })
       })
 
-      // Create an OffscreenCanvas to draw the video frame
-      const canvas = new OffscreenCanvas(video.videoWidth, video.videoHeight)
-      const ctx = canvas.getContext('2d')
+      // Create a canvas to draw the video frame
+      let canvas: OffscreenCanvas | HTMLCanvasElement
+      if (typeof OffscreenCanvas !== 'undefined') {
+        canvas = new OffscreenCanvas(video.videoWidth, video.videoHeight)
+      } else {
+        // Fallback to regular canvas if OffscreenCanvas not available
+        const htmlCanvas = document.createElement('canvas')
+        htmlCanvas.width = video.videoWidth
+        htmlCanvas.height = video.videoHeight
+        canvas = htmlCanvas
+      }
+
+      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null
       if (!ctx) {
         throw new Error('Failed to get canvas context')
       }
 
       // Draw the current frame
-      ctx.drawImage(video, 0, 0)
+      (ctx as any).drawImage(video, 0, 0)
 
       // Convert canvas to VideoFrame
-      const videoFrame = new VideoFrame(canvas, {
+      const videoFrame = new VideoFrame(canvas as any, {
         timestamp: snappedTime,
         duration: Math.round(1_000_000 / fps),
       })
