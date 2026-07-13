@@ -33,7 +33,7 @@ class AssetDecoderSession {
   private readonly cache = new Map<number, VideoFrame>() // sample index -> frame, insertion order = LRU
   private cacheBytes = 0
   private readonly loaded: Promise<void>
-  private pendingOutputs: ((frame: VideoFrame) => void)[] = []
+  private pendingOutputs: ((frame: VideoFrame | undefined) => void)[] = []
   // Real playback fires a render request every rAF without waiting for the
   // previous one's decode to finish (Transport.tick's `void renderFrameAt`),
   // and decode round-trips on real hardware routinely outlast one frame
@@ -75,8 +75,22 @@ class AssetDecoderSession {
         else frame.close()
       },
       error: () => {
-        // Surfaced via getFrameAt's rejection path when decode() itself throws;
-        // an async decoder error with no in-flight caller just drops the frame.
+        // A fatal decoder error would otherwise leave every in-flight
+        // getFrameAt waiter pending forever — and since decode work is
+        // serialized per session, that would freeze frame delivery for this
+        // asset permanently (the canvas just keeps its last drawn frame).
+        // Settle all waiters empty-handed and drop the decoder so the next
+        // request reconfigures and reseeks from a keyframe.
+        const pending = this.pendingOutputs
+        this.pendingOutputs = []
+        for (const cb of pending) cb(undefined)
+        try {
+          this.decoder?.close()
+        } catch {
+          // Already closed by the UA after the fatal error.
+        }
+        this.decoder = undefined
+        this.decodedUpToIndex = -1
       },
     })
     decoder.configure({
@@ -189,9 +203,23 @@ class AssetDecoderSession {
     let targetFrame: VideoFrame | undefined
     for (let i = startIndex; i <= targetIndex; i++) {
       const sample = this.samples[i]
-      const framePromise = new Promise<VideoFrame>((resolve) => this.pendingOutputs.push(resolve))
-      activeDecoder.decode(new EncodedVideoChunk(sample.chunk))
+      let waiter!: (frame: VideoFrame | undefined) => void
+      const framePromise = new Promise<VideoFrame | undefined>((resolve) => {
+        waiter = resolve
+        this.pendingOutputs.push(resolve)
+      })
+      try {
+        activeDecoder.decode(new EncodedVideoChunk(sample.chunk))
+      } catch {
+        // Decoder already closed by the error callback mid-loop — bail, and
+        // pull our waiter back out so it can't swallow a later output.
+        this.pendingOutputs = this.pendingOutputs.filter((cb) => cb !== waiter)
+        return undefined
+      }
       const frame = await framePromise
+      // undefined = the decoder hit a fatal error; state was already reset
+      // for the next request to reseek. Give up on this frame.
+      if (!frame) return undefined
       this.decodedUpToIndex = i
       if (i === targetIndex) {
         targetFrame = frame

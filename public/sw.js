@@ -39,29 +39,32 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return
 
   if (url.pathname.startsWith('/assets/')) {
-    event.respondWith(cacheFirst(request))
+    event.respondWith(cacheFirst(event, request))
     return
   }
 
   if (request.mode === 'navigate') {
-    event.respondWith(networkFirst(request))
+    event.respondWith(networkFirst(event, request))
   }
 })
 
-async function cacheFirst(request) {
+// Cache writes ride on event.waitUntil so the browser doesn't tear the
+// worker down (or move on) before the put lands — a floating put can lose
+// the entry, leaving the shell uncached and the app broken offline.
+async function cacheFirst(event, request) {
   const cache = await caches.open(ASSET_CACHE)
   const cached = await cache.match(request)
   if (cached) return cached
   const response = await fetch(request)
-  if (response.ok) cache.put(request, response.clone())
+  if (response.ok) event.waitUntil(cache.put(request, response.clone()))
   return response
 }
 
-async function networkFirst(request) {
+async function networkFirst(event, request) {
   const cache = await caches.open(SHELL_CACHE)
   try {
     const response = await fetch(request)
-    if (response.ok) cache.put(request, response.clone())
+    if (response.ok) event.waitUntil(cache.put(request, response.clone()))
     return response
   } catch (err) {
     const cached = (await cache.match(request)) ?? (await cache.match('/'))
