@@ -42,6 +42,7 @@ export interface TimelineClipProps {
   onMoveCommit: (clipId: string, trackId: string, startMicros: Micros) => void
   onTrimStartCommit: (clipId: string, startMicros: Micros) => void
   onTrimEndCommit: (clipId: string, endMicros: Micros) => void
+  onKeyframeClick?: (micros: Micros) => void
 }
 
 export function TimelineClip(props: TimelineClipProps) {
@@ -66,6 +67,7 @@ export function TimelineClip(props: TimelineClipProps) {
     onMoveCommit,
     onTrimStartCommit,
     onTrimEndCommit,
+    onKeyframeClick,
   } = props
 
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -186,6 +188,29 @@ export function TimelineClip(props: TimelineClipProps) {
         </div>
       )}
       {waveform && waveform.length > 0 && <WaveformBars peaks={waveform} />}
+      {clip.keyframes.length > 0 && (
+        <div className="absolute inset-0 pointer-events-none">
+          {clip.keyframes.map((k) => {
+            const keyframeX = (k.atMicros / (clip.durationMicros / clip.speed)) * width
+            return (
+              <button
+                key={k.id}
+                type="button"
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 pointer-events-auto text-yellow-400 hover:text-yellow-300"
+                style={{ left: keyframeX }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onKeyframeClick?.(clip.startMicros + k.atMicros)
+                }}
+                aria-label={`Keyframe ${k.property}`}
+                title={`${k.property} @ ${(k.atMicros / 1_000_000).toFixed(2)}s`}
+              >
+                ◇
+              </button>
+            )
+          })}
+        </div>
+      )}
       <span className="relative truncate px-1.5 pt-0.5 text-[0.6875rem] font-medium text-white drop-shadow">
         {clip.text?.content ?? asset?.originalName ?? 'Clip'}
       </span>
