@@ -155,109 +155,134 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
       // Render background first
       compositor.renderBackground(doc.settings.background)
 
+      // Build list of clips active at this time with their progress through transitions
+      const activeClips: Array<{ clip: any; track: any; transitionProgress?: number }> = []
+
       // Find all clips that are active at this time
       for (const track of doc.tracks) {
-        for (const clip of track.clips) {
+        for (let i = 0; i < track.clips.length; i++) {
+          const clip = track.clips[i]
+          const clipStart = clip.startMicros
+          const clipEnd = clip.startMicros + clip.durationMicros
+
           // Check if clip is playing at this time
-          if (timeMicros < clip.startMicros || timeMicros >= clip.startMicros + clip.durationMicros) {
-            continue // Not playing
+          if (timeMicros < clipStart || timeMicros >= clipEnd) {
+            // Check for transition overlap with next clip
+            if (clip.transitionOut) {
+              const transitionDuration = clip.transitionOut.durationMicros ?? 0
+              const transitionStart = clipEnd - transitionDuration
+
+              if (transitionStart < timeMicros && timeMicros < clipEnd && transitionDuration > 0) {
+                // We're in a transition
+                const progress = (timeMicros - transitionStart) / transitionDuration
+                activeClips.push({ clip, track, transitionProgress: progress })
+              }
+            }
+            continue
           }
 
-          // Calculate time within the clip
-          const clipLocalTime = timeMicros - clip.startMicros
+          activeClips.push({ clip, track })
+        }
+      }
 
-          if (track.kind === 'text') {
-            // Render text clip
-            if (clip.text) {
-              try {
-                const textCanvas = new OffscreenCanvas(width, height)
-                const ctx = textCanvas.getContext('2d')
-                if (ctx) {
-                  // Clear canvas
-                  ctx.clearRect(0, 0, width, height)
+      // Render all active clips
+      for (const { clip, track, transitionProgress } of activeClips) {
+        const clipLocalTime = timeMicros - clip.startMicros
+        const opacity = transitionProgress !== undefined
+          ? clip.transform.opacity * (1 - transitionProgress)
+          : clip.transform.opacity
 
-                  // Configure text rendering
-                  ctx.font = `${clip.text.fontSize}px ${clip.text.fontFamily}`
-                  ctx.fillStyle = clip.text.color
-                  ctx.textAlign = clip.text.align as CanvasTextAlign
-                  ctx.textBaseline = 'middle'
+        if (track.kind === 'text') {
+          // Render text clip
+          if (clip.text) {
+            try {
+              const textCanvas = new OffscreenCanvas(width, height)
+              const ctx = textCanvas.getContext('2d')
+              if (ctx) {
+                // Clear canvas
+                ctx.clearRect(0, 0, width, height)
 
-                  // Add stroke if needed
-                  if (clip.text.strokeWidth > 0) {
-                    ctx.strokeStyle = clip.text.strokeColor || '#000000'
-                    ctx.lineWidth = clip.text.strokeWidth
-                    ctx.strokeText(clip.text.content, width / 2, height / 2)
+                // Configure text rendering
+                ctx.font = `${clip.text.fontSize}px ${clip.text.fontFamily}`
+                ctx.fillStyle = clip.text.color
+                ctx.textAlign = clip.text.align as CanvasTextAlign
+                ctx.textBaseline = 'middle'
+
+                // Add stroke if needed
+                if (clip.text.strokeWidth > 0) {
+                  ctx.strokeStyle = clip.text.strokeColor || '#000000'
+                  ctx.lineWidth = clip.text.strokeWidth
+                  ctx.strokeText(clip.text.content, width / 2, height / 2)
+                }
+
+                // Draw text
+                ctx.fillText(clip.text.content, width / 2, height / 2)
+
+                // Render using compositor
+                const imageData = ctx.getImageData(0, 0, width, height)
+                compositor.renderClip({
+                  imageData,
+                  opacity,
+                  x: clip.transform.x,
+                  y: clip.transform.y,
+                  scaleX: clip.transform.scale,
+                  scaleY: clip.transform.scale,
+                  rotation: clip.transform.rotation,
+                  blendMode: 'normal'
+                })
+              }
+            } catch (err) {
+              console.error('Failed to render text clip:', err)
+            }
+          }
+        } else if (track.kind === 'video' || track.kind === 'audio') {
+          // Render video/audio clip
+          const inPoint = clip.inPointMicros || 0
+          const sourceTime = inPoint + Math.floor(clipLocalTime / clip.speed)
+
+          // Get frame from source
+          if (clip.assetId) {
+            frameSource.getFrame(clip.assetId, sourceTime, fps, 'proxy')
+              .then((decodedFrame) => {
+                if (decodedFrame) {
+                  // Render the frame using compositor
+                  const frame = decodedFrame.frame
+
+                  // Calculate display size (fit to canvas)
+                  const scaleX = width / (frame.displayWidth || width)
+                  const scaleY = height / (frame.displayHeight || height)
+                  const scale = Math.min(scaleX, scaleY)
+
+                  // Apply effects to frame if present
+                  let effectsFrame = frame
+                  if (clip.effects && clip.effects.length > 0) {
+                    try {
+                      effectsFrame = applyEffectsToFrame(frame, clip.effects, width, height)
+                    } catch (err) {
+                      console.error('Failed to apply effects:', err)
+                    }
                   }
 
-                  // Draw text
-                  ctx.fillText(clip.text.content, width / 2, height / 2)
-
-                  // Render using compositor
-                  const imageData = ctx.getImageData(0, 0, width, height)
                   compositor.renderClip({
-                    imageData,
-                    opacity: clip.transform.opacity,
+                    videoFrame: effectsFrame,
+                    opacity,
                     x: clip.transform.x,
                     y: clip.transform.y,
-                    scaleX: clip.transform.scale,
-                    scaleY: clip.transform.scale,
+                    scaleX: scale * clip.transform.scale,
+                    scaleY: scale * clip.transform.scale,
                     rotation: clip.transform.rotation,
                     blendMode: 'normal'
                   })
                 }
-              } catch (err) {
-                console.error('Failed to render text clip:', err)
-              }
-            }
-          } else if (track.kind === 'video' || track.kind === 'audio') {
-            // Render video/audio clip
-            const inPoint = clip.inPointMicros || 0
-            const sourceTime = inPoint + Math.floor(clipLocalTime / clip.speed)
-
-            // Get frame from source
-            if (clip.assetId) {
-              frameSource.getFrame(clip.assetId, sourceTime, fps, 'proxy')
-                .then((decodedFrame) => {
-                  if (decodedFrame) {
-                    // Render the frame using compositor
-                    const frame = decodedFrame.frame
-
-                    // Calculate display size (fit to canvas)
-                    const scaleX = width / (frame.displayWidth || width)
-                    const scaleY = height / (frame.displayHeight || height)
-                    const scale = Math.min(scaleX, scaleY)
-
-                    // Apply effects to frame if present
-                    let effectsFrame = frame
-                    if (clip.effects && clip.effects.length > 0) {
-                      try {
-                        effectsFrame = applyEffectsToFrame(frame, clip.effects, width, height)
-                      } catch (err) {
-                        console.error('Failed to apply effects:', err)
-                      }
-                    }
-
-                    compositor.renderClip({
-                      videoFrame: effectsFrame,
-                      opacity: clip.transform.opacity,
-                      x: clip.transform.x,
-                      y: clip.transform.y,
-                      scaleX: scale * clip.transform.scale,
-                      scaleY: scale * clip.transform.scale,
-                      rotation: clip.transform.rotation,
-                      blendMode: 'normal'
-                    })
-                  }
-                })
-                .catch((err) => {
-                  console.error('Failed to decode frame:', err)
-                })
-            }
+              })
+              .catch((err) => {
+                console.error('Failed to decode frame:', err)
+              })
           }
         }
       }
     },
-    [width, height]
+    [width, height, fps]
   )
 
   const projectDuration = Math.max(
