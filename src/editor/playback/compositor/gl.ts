@@ -254,6 +254,35 @@ export class Compositor {
     return texture
   }
 
+  /**
+   * True once a direct `texImage2D(VideoFrame)` upload has thrown on this
+   * browser. Chromium accepts a VideoFrame as a TexImageSource; iPad Safari
+   * throws a TypeError instead — decode succeeds, but the GPU upload of the
+   * decoded frame dies, so video (and only video) never paints. When that
+   * happens we permanently switch to routing frames through a reusable 2D
+   * canvas, which every browser accepts (the import pipeline already relies
+   * on 2D drawImage(VideoFrame) working).
+   */
+  private videoFrameUploadUnsupported = false
+  private frameConvertCanvas: OffscreenCanvas | undefined
+  private frameConvertCtx: OffscreenCanvasRenderingContext2D | undefined
+
+  private convertFrameToCanvas(frame: VideoFrame): OffscreenCanvas {
+    // Coded dimensions, not display: resolveClipSource sizes the quad from
+    // codedWidth/Height, and our own proxies bake rotation in at import so
+    // the two never differ in practice.
+    const width = frame.codedWidth
+    const height = frame.codedHeight
+    if (!this.frameConvertCanvas || this.frameConvertCanvas.width !== width || this.frameConvertCanvas.height !== height) {
+      this.frameConvertCanvas = new OffscreenCanvas(width, height)
+      const ctx = this.frameConvertCanvas.getContext('2d')
+      if (!ctx) throw new Error('2D canvas context unavailable for VideoFrame conversion')
+      this.frameConvertCtx = ctx
+    }
+    this.frameConvertCtx!.drawImage(frame, 0, 0, width, height)
+    return this.frameConvertCanvas
+  }
+
   /** Uploads `source` into the quad `slotKey` and draws it at `opacity`, quad given in canvas pixel space. */
   drawLayer(
     slotKey: string,
@@ -269,7 +298,16 @@ export class Compositor {
     if (!texture) return
     gl.activeTexture(gl.TEXTURE0)
     gl.bindTexture(gl.TEXTURE_2D, texture)
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source)
+
+    const frameSource = typeof VideoFrame !== 'undefined' && source instanceof VideoFrame ? source : undefined
+    const uploadSource = frameSource && this.videoFrameUploadUnsupported ? this.convertFrameToCanvas(frameSource) : source
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, uploadSource)
+    } catch (err) {
+      if (!frameSource || this.videoFrameUploadUnsupported) throw err
+      this.videoFrameUploadUnsupported = true
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.convertFrameToCanvas(frameSource))
+    }
 
     const ndc = quad.map((p) => pxToNdc(p, this.canvasWidth, this.canvasHeight))
     // eslint-disable-next-line @typescript-eslint/no-magic-numbers -- two triangles covering the quad: TL,TR,BR then TL,BR,BL
