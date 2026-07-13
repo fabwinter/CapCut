@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, SettingsIcon, UndoIcon } from 'lucide-react'
+import { CheckIcon, ChevronLeftIcon, FilmIcon, LoaderCircleIcon, RedoIcon, SettingsIcon, UndoIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
+import { Drawer, DrawerContent } from '#/components/ui/drawer'
 import { Input } from '#/components/ui/input'
 import { ExportDialog } from '#/components/editor/ExportDialog'
 import { Inspector } from '#/components/editor/Inspector'
@@ -14,6 +15,7 @@ import { renameProject } from '#/editor/doc/commands/project'
 import { projectDurationMicros } from '#/editor/doc/schema'
 import { frameDurationMicros } from '#/editor/doc/time'
 import { useEditorStore } from '#/editor/state/editorStore'
+import { useIsMobile } from '#/hooks/use-mobile'
 import { loadProject } from '#/storage/idb'
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -47,6 +49,8 @@ function Editor() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [exportOpen, setExportOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [mediaOpen, setMediaOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   // Desktop bonus (ARCHITECTURE §1: secondary on iPad, but cheap and expected on desktop browsers).
   useEffect(() => {
@@ -168,6 +172,16 @@ function Editor() {
           >
             <RedoIcon className="size-4" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            aria-label="Media library"
+            data-action="open-media"
+            className="md:hidden"
+            onClick={() => setMediaOpen(true)}
+          >
+            <FilmIcon className="size-4" />
+          </Button>
         </div>
 
         <div className="ml-auto flex items-center gap-3">
@@ -188,9 +202,11 @@ function Editor() {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <aside className="border-border w-64 shrink-0 border-r">
-          <MediaLibrary projectId={projectId} />
-        </aside>
+        {!isMobile && (
+          <aside className="border-border w-64 shrink-0 border-r">
+            <MediaLibrary projectId={projectId} />
+          </aside>
+        )}
 
         {/* min-w-0: without it this flex item's min-width tracks the timeline's
             intrinsic content width, and a long project pushes the Inspector and
@@ -200,13 +216,21 @@ function Editor() {
             <PreviewCanvas projectId={projectId} doc={doc} />
           </div>
 
-          <div className="border-border bg-card/40 h-56 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)]">
+          <div className="border-border bg-card/40 h-44 shrink-0 border-t [padding-bottom:env(safe-area-inset-bottom)] md:h-56">
             <Timeline projectId={projectId} doc={doc} />
           </div>
         </div>
 
         <Inspector />
       </main>
+
+      {isMobile && (
+        <Drawer direction="left" open={mediaOpen} onOpenChange={setMediaOpen}>
+          <DrawerContent className="h-full">
+            <MediaLibrary projectId={projectId} />
+          </DrawerContent>
+        </Drawer>
+      )}
 
       <ExportDialog
         open={exportOpen}
@@ -249,7 +273,7 @@ function ProjectNameField({ name, onCommit }: { name: string; onCommit: (name: s
             setEditing(false)
           }
         }}
-        className="h-9 w-48 text-sm"
+        className="h-9 w-28 text-sm sm:w-40 md:w-48"
       />
     )
   }
@@ -258,7 +282,7 @@ function ProjectNameField({ name, onCommit }: { name: string; onCommit: (name: s
     <button
       type="button"
       onClick={() => setEditing(true)}
-      className="max-w-48 truncate rounded-md px-2 py-1 text-sm font-medium hover:bg-muted"
+      className="max-w-28 truncate rounded-md px-2 py-1 text-sm font-medium hover:bg-muted sm:max-w-40 md:max-w-48"
     >
       {name}
     </button>
@@ -271,21 +295,22 @@ function SaveIndicator({ isDirty, isSaving }: { isDirty: boolean; isSaving: bool
     return (
       <span data-save-state={state} className="text-muted-foreground flex items-center gap-1.5 text-xs">
         <LoaderCircleIcon className="size-3 animate-spin" />
-        Saving…
+        <span className="hidden sm:inline">Saving…</span>
       </span>
     )
   }
   if (state === 'unsaved') {
     return (
-      <span data-save-state={state} className="text-muted-foreground text-xs">
-        Unsaved changes
+      <span data-save-state={state} className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <span className="bg-muted-foreground size-1.5 shrink-0 rounded-full sm:hidden" />
+        <span className="hidden sm:inline">Unsaved changes</span>
       </span>
     )
   }
   return (
     <span data-save-state={state} className="text-muted-foreground flex items-center gap-1.5 text-xs">
       <CheckIcon className="size-3" />
-      Saved
+      <span className="hidden sm:inline">Saved</span>
     </span>
   )
 }
