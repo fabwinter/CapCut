@@ -14,9 +14,10 @@ import {
   setProjectAspect,
   extractAudioFromClip,
 } from '#/editor/doc/commands/editing'
+import { setClipText, setClipEffect, removeClipEffect, setClipTransition, removeClipTransition } from '#/editor/doc/commands/styling'
 import { deleteClip, duplicateClip, splitClip } from '#/editor/doc/commands/clips'
 
-type ToolbarPage = 'main' | 'speed' | 'volume' | 'fade' | 'aspect' | 'extract'
+type ToolbarPage = 'main' | 'speed' | 'volume' | 'fade' | 'aspect' | 'extract' | 'text' | 'effects' | 'transition'
 
 interface EditorToolbarProps {
   doc: ProjectDoc
@@ -75,6 +76,9 @@ export function EditorToolbar({ doc, selectedClipId }: EditorToolbarProps) {
           onFadeClick={() => setPage('fade')}
           onAspectClick={() => setPage('aspect')}
           onExtractClick={() => setPage('extract')}
+          onTextClick={() => setPage('text')}
+          onEffectsClick={() => setPage('effects')}
+          onTransitionClick={() => setPage('transition')}
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
           onSplit={handleSplit}
@@ -135,6 +139,42 @@ export function EditorToolbar({ doc, selectedClipId }: EditorToolbarProps) {
           }}
         />
       )}
+
+      {page === 'text' && selectedClip.text && (
+        <TextPage
+          clip={selectedClip}
+          onBack={() => setPage('main')}
+          onTextChange={(text) => {
+            dispatch(setClipText(selectedClip.id, text))
+          }}
+        />
+      )}
+
+      {page === 'effects' && (
+        <EffectsPage
+          clip={selectedClip}
+          onBack={() => setPage('main')}
+          onEffectChange={(effectType, params) => {
+            dispatch(setClipEffect(selectedClip.id, effectType, params))
+          }}
+          onEffectRemove={(effectType) => {
+            dispatch(removeClipEffect(selectedClip.id, effectType))
+          }}
+        />
+      )}
+
+      {page === 'transition' && (
+        <TransitionPage
+          clip={selectedClip}
+          onBack={() => setPage('main')}
+          onTransitionChange={(type, duration) => {
+            dispatch(setClipTransition(selectedClip.id, type, duration))
+          }}
+          onTransitionRemove={() => {
+            dispatch(removeClipTransition(selectedClip.id))
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -146,6 +186,9 @@ function MainPage({
   onFadeClick,
   onAspectClick,
   onExtractClick,
+  onTextClick,
+  onEffectsClick,
+  onTransitionClick,
   onDelete,
   onDuplicate,
   onSplit,
@@ -156,6 +199,9 @@ function MainPage({
   onFadeClick: () => void
   onAspectClick: () => void
   onExtractClick: () => void
+  onTextClick: () => void
+  onEffectsClick: () => void
+  onTransitionClick: () => void
   onDelete: () => void
   onDuplicate: () => void
   onSplit: () => void
@@ -211,6 +257,32 @@ function MainPage({
             Extract
           </Button>
         )}
+        {clip.text && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onTextClick}
+            className="text-xs h-8"
+          >
+            Text
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onEffectsClick}
+          className="text-xs h-8"
+        >
+          Effects {clip.effects.length > 0 && `(${clip.effects.length})`}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onTransitionClick}
+          className="text-xs h-8"
+        >
+          Transition {clip.transitionOut && '✓'}
+        </Button>
       </div>
 
       {/* Quick actions */}
@@ -484,6 +556,253 @@ function ExtractPage({
       >
         Extract
       </Button>
+    </div>
+  )
+}
+
+function TextPage({
+  clip,
+  onBack,
+  onTextChange,
+}: {
+  clip: Clip
+  onBack: () => void
+  onTextChange: (text: any) => void
+}) {
+  const text = clip.text
+  if (!text) return null
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onBack}
+          className="h-8 w-8"
+        >
+          <ChevronLeftIcon className="size-4" />
+        </Button>
+        <span className="text-sm font-medium">Text</span>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium">Font Size</label>
+        <input
+          type="range"
+          min="8"
+          max="120"
+          step="1"
+          value={text.fontSize}
+          onChange={(e) => onTextChange({ fontSize: parseInt(e.target.value) })}
+          className="w-full"
+        />
+        <span className="text-xs text-muted-foreground">
+          {text.fontSize}px
+        </span>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium">Color</label>
+        <input
+          type="color"
+          value={text.color}
+          onChange={(e) => onTextChange({ color: e.target.value })}
+          className="w-full h-8 rounded cursor-pointer"
+        />
+      </div>
+
+      <div>
+        <label className="text-xs font-medium">Align</label>
+        <div className="flex gap-1">
+          {(['left', 'center', 'right'] as const).map((align) => (
+            <Button
+              key={align}
+              variant={text.align === align ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => onTextChange({ align })}
+              className="text-xs h-8 flex-1"
+            >
+              {align.charAt(0).toUpperCase() + align.slice(1)}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium">Animation In</label>
+        <div className="flex gap-1 flex-wrap">
+          {(['none', 'fadeIn', 'slideIn', 'popIn'] as const).map((anim) => (
+            <Button
+              key={anim}
+              variant={text.animationIn === anim ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => onTextChange({ animationIn: anim })}
+              className="text-xs h-8"
+            >
+              {anim}
+            </Button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EffectsPage({
+  clip,
+  onBack,
+  onEffectChange,
+  onEffectRemove,
+}: {
+  clip: Clip
+  onBack: () => void
+  onEffectChange: (type: any, params: Record<string, number>) => void
+  onEffectRemove: (type: any) => void
+}) {
+  const effectTypes: Array<'brightness' | 'contrast' | 'saturation' | 'temperature' | 'vignette' | 'lut'> = [
+    'brightness',
+    'contrast',
+    'saturation',
+    'temperature',
+    'vignette',
+  ]
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onBack}
+          className="h-8 w-8"
+        >
+          <ChevronLeftIcon className="size-4" />
+        </Button>
+        <span className="text-sm font-medium">Effects</span>
+      </div>
+
+      <div className="space-y-2">
+        {effectTypes.map((effectType) => {
+          const effect = clip.effects.find((e) => e.type === effectType)
+          const isActive = !!effect
+
+          return (
+            <div key={effectType}>
+              <Button
+                variant={isActive ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (isActive) {
+                    onEffectRemove(effectType)
+                  } else {
+                    onEffectChange(effectType, { value: 1 })
+                  }
+                }}
+                className="text-xs h-8 w-full"
+              >
+                {effectType.charAt(0).toUpperCase() + effectType.slice(1)} {isActive && '✓'}
+              </Button>
+              {isActive && effect && (
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={effect.params.value ?? 1}
+                  onChange={(e) =>
+                    onEffectChange(effectType, { value: parseFloat(e.target.value) })
+                  }
+                  className="w-full mt-1"
+                />
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function TransitionPage({
+  clip,
+  onBack,
+  onTransitionChange,
+  onTransitionRemove,
+}: {
+  clip: Clip
+  onBack: () => void
+  onTransitionChange: (type: any, duration: number) => void
+  onTransitionRemove: () => void
+}) {
+  const transitionTypes: Array<'crossDissolve' | 'dipToBlack' | 'wipe' | 'slide'> = [
+    'crossDissolve',
+    'dipToBlack',
+    'wipe',
+    'slide',
+  ]
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onBack}
+          className="h-8 w-8"
+        >
+          <ChevronLeftIcon className="size-4" />
+        </Button>
+        <span className="text-sm font-medium">Transition</span>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium">Type</label>
+        <div className="flex gap-1 flex-wrap">
+          {transitionTypes.map((type) => (
+            <Button
+              key={type}
+              variant={clip.transitionOut?.type === type ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => onTransitionChange(type, clip.transitionOut?.durationMicros ?? 300_000)}
+              className="text-xs h-8"
+            >
+              {type}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {clip.transitionOut && (
+        <div>
+          <label className="text-xs font-medium">Duration</label>
+          <input
+            type="range"
+            min="0"
+            max="1000000"
+            step="50000"
+            value={clip.transitionOut.durationMicros}
+            onChange={(e) =>
+              onTransitionChange(clip.transitionOut!.type, parseInt(e.target.value))
+            }
+            className="w-full"
+          />
+          <span className="text-xs text-muted-foreground">
+            {(clip.transitionOut.durationMicros / 1_000_000).toFixed(2)}s
+          </span>
+        </div>
+      )}
+
+      {clip.transitionOut && (
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={onTransitionRemove}
+          className="w-full text-xs h-8"
+        >
+          Remove Transition
+        </Button>
+      )}
     </div>
   )
 }
