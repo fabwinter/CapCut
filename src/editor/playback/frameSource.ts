@@ -129,6 +129,20 @@ class AssetDecoderSession {
     return this.lastFailureMessage
   }
 
+  /**
+   * Called after `resetAfterFailure()` on any decode failure. Retries once
+   * per `decodeTo` call (via `attempt`), escalating to software decode on
+   * that retry if we hadn't already — independent of whatever hardware
+   * mode a *previous*, unrelated `decodeTo` call left the session in, so a
+   * later failure always gets its own chance to recover instead of only
+   * ever the first one in the session.
+   */
+  private retryAfterFailure(targetIndex: number, attempt: number): Promise<VideoFrame | undefined> | undefined {
+    if (attempt > 0) return undefined
+    if (this.hardwareAcceleration === 'no-preference') this.hardwareAcceleration = 'prefer-software'
+    return this.decodeTo(targetIndex, attempt + 1)
+  }
+
   /** Settles every pending waiter empty-handed and drops the decoder so the next request reconfigures and reseeks from a keyframe. Shared by the decoder's fatal-error callback and a stalled-decode timeout. */
   private resetAfterFailure(): void {
     const pending = this.pendingOutputs
@@ -214,8 +228,23 @@ class AssetDecoderSession {
     return turn
   }
 
-  /** Decodes forward to `targetIndex`, reseeking to the nearest keyframe first if necessary. Only ever called with one call in flight at a time — see `queue`. */
-  private async decodeTo(targetIndex: number): Promise<VideoFrame | undefined> {
+  /**
+   * Decodes forward to `targetIndex`, reseeking to the nearest keyframe
+   * first if necessary. Only ever called with one call in flight at a time
+   * — see `queue`.
+   *
+   * `attempt` bounds recovery retries (reseek-from-keyframe, and — on the
+   * first attempt only — a hardware→software decode fallback) to one retry
+   * per call, independent of `hardwareAcceleration`'s sticky session-wide
+   * state. Gating retries solely on "are we still in the default hardware
+   * mode" meant only the *first* failure in a session ever got a second
+   * chance — once the software fallback had already been spent recovering
+   * from an earlier hiccup, every later failure (a real one can happen more
+   * than once over a long playback session) killed the decoder outright
+   * with no recourse, even though a plain reseek-and-retry (no mode change
+   * needed) might well have recovered it.
+   */
+  private async decodeTo(targetIndex: number, attempt = 0): Promise<VideoFrame | undefined> {
     // A queued call ahead of us may have already decoded (and cached) this
     // exact frame by the time our turn comes up.
     const cached = this.cache.get(targetIndex)
@@ -259,13 +288,9 @@ class AssetDecoderSession {
       try {
         activeDecoder.decode(new EncodedVideoChunk(this.samples[i].chunk))
       } catch (e) {
-        this.lastFailureMessage = `decode() threw on sample ${i}/${this.samples.length - 1}: ${e instanceof Error ? e.message : String(e)} (hw=${this.hardwareAcceleration})`
+        this.lastFailureMessage = `decode() threw on sample ${i}/${this.samples.length - 1}: ${e instanceof Error ? e.message : String(e)} (hw=${this.hardwareAcceleration}, attempt=${attempt})`
         this.resetAfterFailure()
-        if (this.hardwareAcceleration === 'no-preference') {
-          this.hardwareAcceleration = 'prefer-software'
-          return this.decodeTo(targetIndex)
-        }
-        return undefined
+        return await this.retryAfterFailure(targetIndex, attempt)
       }
     }
 
@@ -288,21 +313,17 @@ class AssetDecoderSession {
       new Promise<typeof flushTimedOut>((resolve) => setTimeout(() => resolve(flushTimedOut), DECODE_TIMEOUT_MS)),
     ])
     if (flushResult !== true) {
-      this.lastFailureMessage = `decoder.flush() ${flushResult === false ? 'rejected' : `timed out after ${DECODE_TIMEOUT_MS}ms`} draining batch (samples ${startIndex}-${targetIndex}/${this.samples.length - 1}, hw=${hwMode})`
+      this.lastFailureMessage = `decoder.flush() ${flushResult === false ? 'rejected' : `timed out after ${DECODE_TIMEOUT_MS}ms`} draining batch (samples ${startIndex}-${targetIndex}/${this.samples.length - 1}, hw=${hwMode}, attempt=${attempt})`
       this.resetAfterFailure()
-      if (hwMode === 'no-preference') {
-        // A decoder that can't even drain what it was given is a classic
-        // signature of a hardware decode session the OS wouldn't grant —
-        // constrained devices cap concurrent hardware decode sessions
-        // system-wide, not just per tab, and a denied session doesn't
-        // error, it just never responds. Software decode sidesteps that
-        // limit entirely, and proxies are downscaled specifically so
-        // software decode is affordable — worth one transparent retry
-        // before surfacing a failure.
-        this.hardwareAcceleration = 'prefer-software'
-        return this.decodeTo(targetIndex)
-      }
-      return undefined
+      // A decoder that can't even drain what it was given is a classic
+      // signature of a hardware decode session the OS wouldn't grant —
+      // constrained devices cap concurrent hardware decode sessions
+      // system-wide, not just per tab, and a denied session doesn't error,
+      // it just never responds. Software decode sidesteps that limit
+      // entirely, and proxies are downscaled specifically so software
+      // decode is affordable — worth one transparent retry before
+      // surfacing a failure.
+      return await this.retryAfterFailure(targetIndex, attempt)
     }
 
     // Every output for this batch should have arrived by now (or the
@@ -321,21 +342,16 @@ class AssetDecoderSession {
         new Promise<typeof drainTimedOut>((resolve) => setTimeout(() => resolve(drainTimedOut), DRAIN_GRACE_MS)),
       ])
       if (drained === drainTimedOut) {
-        this.lastFailureMessage = `flush() resolved but sample ${i}/${this.samples.length - 1} never arrived within ${DRAIN_GRACE_MS}ms after (hw=${hwMode})`
+        this.lastFailureMessage = `flush() resolved but sample ${i}/${this.samples.length - 1} never arrived within ${DRAIN_GRACE_MS}ms after (hw=${hwMode}, attempt=${attempt})`
         this.resetAfterFailure()
-        if (hwMode === 'no-preference') {
-          this.hardwareAcceleration = 'prefer-software'
-          return this.decodeTo(targetIndex)
-        }
-        return undefined
+        return await this.retryAfterFailure(targetIndex, attempt)
       }
       const frame = drained
+      // undefined here means the decoder's error callback already fired (it
+      // settles pendingOutputs itself) and called resetAfterFailure — no
+      // need to call it again.
       if (!frame) {
-        if (this.hardwareAcceleration === 'no-preference') {
-          this.hardwareAcceleration = 'prefer-software'
-          return this.decodeTo(targetIndex)
-        }
-        return undefined
+        return await this.retryAfterFailure(targetIndex, attempt)
       }
       this.decodedUpToIndex = i
       if (i === targetIndex) {

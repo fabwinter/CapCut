@@ -194,6 +194,89 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
     expect(frame).toBeDefined()
   })
 
+  it('recovers from a second, independent decode failure even after the software fallback was already spent', async () => {
+    // Reproduces the real-world report: hardware decode fails once early on
+    // (recovered via the existing software fallback), playback continues
+    // fine for a while, then a *different*, later failure hits — at that
+    // point hardwareAcceleration is already 'prefer-software', so gating
+    // retries on "are we still in the default mode" (the old logic) would
+    // give up immediately with no recovery. The new attempt-based retry
+    // must still reseek and recover.
+    let globalDecodeCount = 0
+    let failedSampleOnce = false
+    class TwoIndependentFailuresDecoder {
+      private outputCb: (frame: ReturnType<typeof fakeFrame>) => void
+      private hardwareAcceleration = 'no-preference'
+      private pending = 0
+      private drainResolvers: (() => void)[] = []
+      constructor(init: { output: (frame: ReturnType<typeof fakeFrame>) => void }) {
+        this.outputCb = init.output
+      }
+      configure(config: { hardwareAcceleration?: string }): void {
+        this.hardwareAcceleration = config.hardwareAcceleration ?? 'no-preference'
+      }
+      decode(chunk: { timestamp: number }): void {
+        decodeCallLog.push(chunk.timestamp)
+        globalDecodeCount++
+        // The very first call ever, in hardware mode, hangs forever —
+        // matches the earlier "denied hardware session" test.
+        if (globalDecodeCount === 1 && this.hardwareAcceleration !== 'prefer-software') {
+          this.pending++
+          return
+        }
+        // A second, independent failure later in the stream — a real decode
+        // error, not a hardware/software distinction. Fails exactly once so
+        // the retry's re-decode of this same sample succeeds.
+        if (chunk.timestamp === 7 * 33_333 && !failedSampleOnce) {
+          failedSampleOnce = true
+          throw new Error('Key frame is required')
+        }
+        this.pending++
+        setTimeout(() => {
+          this.outputCb(fakeFrame())
+          this.pending--
+          if (this.pending === 0) {
+            const resolvers = this.drainResolvers
+            this.drainResolvers = []
+            for (const resolve of resolvers) resolve()
+          }
+        }, 1)
+      }
+      flush(): Promise<void> {
+        if (this.pending === 0) return Promise.resolve()
+        return new Promise((resolve) => this.drainResolvers.push(resolve))
+      }
+      close(): void {
+        closedDecoders++
+      }
+    }
+    vi.stubGlobal('VideoDecoder', TwoIndependentFailuresDecoder)
+    vi.useFakeTimers()
+
+    const manager = new FrameSourceManager()
+    const file = new File([], 'proxy.mp4')
+
+    // First request: hardware hang -> software fallback (existing behavior).
+    const first = manager.getFrame('asset-1', file, 0)
+    await vi.advanceTimersByTimeAsync(4_100)
+    expect(await first).toBeDefined()
+
+    // Playback continues forward successfully in software mode.
+    for (let idx = 1; idx <= 3; idx++) {
+      const r = manager.getFrame('asset-1', file, idx * 33_333)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(await r).toBeDefined()
+    }
+
+    // A later, independent failure — hw is already 'prefer-software' — must
+    // still recover via the attempt-based retry.
+    const later = manager.getFrame('asset-1', file, 7 * 33_333)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(await later).toBeDefined()
+
+    vi.useRealTimers()
+  })
+
   it('recovers via a software-decode retry when the decoder only fails in its default (hardware) mode', async () => {
     // Models exactly the real-world case this fallback targets: a
     // constrained device denies a hardware decode session (total silence,
