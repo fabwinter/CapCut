@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TooltipProvider } from '#/components/ui/tooltip'
+import { registerServiceWorker, requestPersistentStorage } from '#/editor/pwa/pwa'
 
 import appCss from '../styles.css?url'
 
@@ -27,6 +29,16 @@ export const Route = createRootRoute({
 })
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    // Initialize PWA features (service worker, persistent storage)
+    registerServiceWorker().catch(() => {
+      // Service Worker not available (not HTTPS or localhost)
+    })
+    requestPersistentStorage().catch(() => {
+      // Persistent storage not available
+    })
+  }, [])
+
   return (
     <html lang="en" className="dark">
       <head>
