@@ -135,4 +135,46 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
     const recovered = await manager.getFrame('asset-1', file, 5 * 33_333)
     expect(recovered).toBeDefined()
   })
+
+  it('a decoder that never calls output or error does not permanently wedge the session', async () => {
+    // Neither callback ever fires — a real stall mode WebCodecs doesn't
+    // guarantee against (backgrounding, thermal throttling, a wedged
+    // hardware decoder). Without a timeout this hangs `getFrameAt` forever,
+    // and because decode work is serialized per session, every later
+    // request for this asset would hang too.
+    class NeverRespondingDecoder {
+      configure(): void {}
+      decode(chunk: { timestamp: number }): void {
+        decodeCallLog.push(chunk.timestamp)
+      }
+      async flush(): Promise<void> {}
+      close(): void {
+        closedDecoders++
+      }
+    }
+    vi.stubGlobal('VideoDecoder', NeverRespondingDecoder)
+    vi.useFakeTimers()
+
+    const manager = new FrameSourceManager()
+    const file = new File([], 'proxy.mp4')
+
+    const hung = manager.getFrame('asset-1', file, 5 * 33_333)
+    let settled = false
+    void hung.then(() => {
+      settled = true
+    })
+
+    await vi.advanceTimersByTimeAsync(3_999)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(settled).toBe(true)
+    expect(await hung).toBeUndefined()
+
+    vi.useRealTimers()
+    vi.stubGlobal('VideoDecoder', FakeVideoDecoder)
+
+    // The queue must not be wedged: a fresh request on a working decoder recovers.
+    const recovered = await manager.getFrame('asset-1', file, 5 * 33_333)
+    expect(recovered).toBeDefined()
+  })
 })
