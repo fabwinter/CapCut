@@ -1,4 +1,4 @@
-import { XIcon } from 'lucide-react'
+import { RotateCwIcon, XIcon } from 'lucide-react'
 import { useMemo } from 'react'
 import { Button } from '#/components/ui/button'
 import { Slider } from '#/components/ui/slider'
@@ -122,6 +122,25 @@ export function Inspector() {
           step={100_000}
           onCommit={(v) => dispatch(setClipFades(clip.id, { fadeOutMicros: v }))}
         />
+      </Section>
+
+      <Section title="Rotate">
+        <div className="flex items-center justify-between gap-2">
+          <span data-field="rotation-degrees" className="text-muted-foreground text-[0.6875rem]">
+            {(((clip.transform.rotation % 360) + 360) % 360).toFixed(0)}°
+          </span>
+          <Button
+            size="xs"
+            variant="outline"
+            data-field="rotate-90"
+            onClick={() => dispatch(setClipTransform(clip.id, { rotation: clip.transform.rotation + 90 }))}
+          >
+            <RotateCwIcon className="mr-1 size-3" /> Rotate 90°
+          </Button>
+        </div>
+        <p className="text-muted-foreground text-[0.6875rem]">
+          If a video plays back rotated incorrectly, use this to correct it manually.
+        </p>
       </Section>
 
       <Section title="Opacity">
