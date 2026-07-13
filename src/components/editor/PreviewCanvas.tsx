@@ -88,8 +88,6 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
 
       // Find all clips that are active at this time
       for (const track of doc.tracks) {
-        if (track.kind === 'text' || track.kind === 'overlay') continue // Skip text/overlay for now
-
         for (const clip of track.clips) {
           // Check if clip is playing at this time
           if (timeMicros < clip.startMicros || timeMicros >= clip.startMicros + clip.durationMicros) {
@@ -99,39 +97,83 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
           // Calculate time within the clip
           const clipLocalTime = timeMicros - clip.startMicros
 
-          // Adjust for clip trim points and playback speed
-          const inPoint = clip.inPointMicros || 0
-          const sourceTime = inPoint + Math.floor(clipLocalTime / clip.speed)
+          if (track.kind === 'text') {
+            // Render text clip
+            if (clip.text) {
+              try {
+                const textCanvas = new OffscreenCanvas(width, height)
+                const ctx = textCanvas.getContext('2d')
+                if (ctx) {
+                  // Clear canvas
+                  ctx.clearRect(0, 0, width, height)
 
-          // Get frame from source
-          if (clip.assetId) {
-            frameSource.getFrame(clip.assetId, sourceTime, fps, 'proxy')
-              .then((decodedFrame) => {
-                if (decodedFrame) {
-                  // Render the frame using compositor
-                  const frame = decodedFrame.frame
+                  // Configure text rendering
+                  ctx.font = `${clip.text.fontSize}px ${clip.text.fontFamily}`
+                  ctx.fillStyle = clip.text.color
+                  ctx.textAlign = clip.text.align as CanvasTextAlign
+                  ctx.textBaseline = 'middle'
 
-                  // Calculate display size (fit to canvas)
-                  const scaleX = width / (frame.displayWidth || width)
-                  const scaleY = height / (frame.displayHeight || height)
-                  const scale = Math.min(scaleX, scaleY)
+                  // Add stroke if needed
+                  if (clip.text.strokeWidth > 0) {
+                    ctx.strokeStyle = clip.text.strokeColor || '#000000'
+                    ctx.lineWidth = clip.text.strokeWidth
+                    ctx.strokeText(clip.text.content, width / 2, height / 2)
+                  }
 
+                  // Draw text
+                  ctx.fillText(clip.text.content, width / 2, height / 2)
+
+                  // Render using compositor
+                  const imageData = ctx.getImageData(0, 0, width, height)
                   compositor.renderClip({
-                    videoFrame: frame,
-                    imageData: undefined,
+                    imageData,
                     opacity: clip.transform.opacity,
                     x: clip.transform.x,
                     y: clip.transform.y,
-                    scaleX: scale * clip.transform.scale,
-                    scaleY: scale * clip.transform.scale,
+                    scaleX: clip.transform.scale,
+                    scaleY: clip.transform.scale,
                     rotation: clip.transform.rotation,
                     blendMode: 'normal'
                   })
                 }
-              })
-              .catch((err) => {
-                console.error('Failed to decode frame:', err)
-              })
+              } catch (err) {
+                console.error('Failed to render text clip:', err)
+              }
+            }
+          } else if (track.kind === 'video' || track.kind === 'audio') {
+            // Render video/audio clip
+            const inPoint = clip.inPointMicros || 0
+            const sourceTime = inPoint + Math.floor(clipLocalTime / clip.speed)
+
+            // Get frame from source
+            if (clip.assetId) {
+              frameSource.getFrame(clip.assetId, sourceTime, fps, 'proxy')
+                .then((decodedFrame) => {
+                  if (decodedFrame) {
+                    // Render the frame using compositor
+                    const frame = decodedFrame.frame
+
+                    // Calculate display size (fit to canvas)
+                    const scaleX = width / (frame.displayWidth || width)
+                    const scaleY = height / (frame.displayHeight || height)
+                    const scale = Math.min(scaleX, scaleY)
+
+                    compositor.renderClip({
+                      videoFrame: frame,
+                      opacity: clip.transform.opacity,
+                      x: clip.transform.x,
+                      y: clip.transform.y,
+                      scaleX: scale * clip.transform.scale,
+                      scaleY: scale * clip.transform.scale,
+                      rotation: clip.transform.rotation,
+                      blendMode: 'normal'
+                    })
+                  }
+                })
+                .catch((err) => {
+                  console.error('Failed to decode frame:', err)
+                })
+            }
           }
         }
       }
