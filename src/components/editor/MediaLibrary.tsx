@@ -139,13 +139,13 @@ function AssetRow({
       </div>
       {isReady && (
         <Button
-          variant="ghost"
-          size="icon-sm"
+          variant="default"
+          size="sm"
           onClick={handleAddToTimeline}
-          aria-label="Add to timeline"
-          className="opacity-0 group-hover:opacity-100 transition"
+          className="text-xs h-7 gap-1"
         >
-          <PlusIcon className="size-4" />
+          <PlusIcon className="size-3.5" />
+          <span className="md:hidden">Add</span>
         </Button>
       )}
       {!isReady && <StatusIndicator asset={asset} />}
