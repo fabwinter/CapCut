@@ -1,5 +1,10 @@
 # CapCut for iPad — Implementation Plan
 
+> **Status:** Phases 0–2 are implemented and merged. Phases 3–7 are **superseded** by
+> [`V2_DESIGN_AND_EDITING_PLAN.md`](./V2_DESIGN_AND_EDITING_PLAN.md), which reworks them
+> iPhone-first with a full design system. Implementing agents should work from the V2 plan;
+> this document remains useful for the Phase 0–2 acceptance criteria and working agreements.
+
 Companion to [`ARCHITECTURE.md`](./ARCHITECTURE.md) — read that first; it defines the stack, constraints, module boundaries, and vocabulary used below.
 
 This plan is written to be executed by multiple agents. Each phase lists **deliverables**, **acceptance criteria** (the definition of done an agent must verify), and **hand-off notes**. Phases are ordered by dependency; work items marked ∥ within a phase can run in parallel by separate agents.
