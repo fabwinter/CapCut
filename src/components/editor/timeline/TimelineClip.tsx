@@ -43,6 +43,9 @@ export interface TimelineClipProps {
   onTrimStartCommit: (clipId: string, startMicros: Micros) => void
   onTrimEndCommit: (clipId: string, endMicros: Micros) => void
   onKeyframeClick?: (micros: Micros) => void
+  onSplit?: (micros: Micros) => void
+  onDuplicate?: () => void
+  onDelete?: (ripple: boolean) => void
 }
 
 export function TimelineClip(props: TimelineClipProps) {
@@ -68,14 +71,26 @@ export function TimelineClip(props: TimelineClipProps) {
     onTrimStartCommit,
     onTrimEndCommit,
     onKeyframeClick,
+    onSplit,
+    onDuplicate,
+    onDelete,
   } = props
 
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const movedRef = useRef(false)
+  const longPressTimerRef = useRef<number | undefined>(undefined)
   const thumbnails = useClipThumbnails(projectId, asset, clip)
   const waveform = useClipWaveformPeaks(projectId, asset, clip)
 
   const thresholdMicros = thresholdMicrosForPx(SNAP_THRESHOLD_PX, pxPerSecond)
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current !== undefined) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = undefined
+    }
+  }
 
   function beginDrag(kind: DragKind, e: React.PointerEvent) {
     if (locked) return
@@ -93,11 +108,19 @@ export function TimelineClip(props: TimelineClipProps) {
       previewStartMicros: clip.startMicros,
       previewTrackId: clip.trackId,
     })
+    if (kind === 'move') {
+      longPressTimerRef.current = window.setTimeout(() => {
+        setContextMenu({ x: e.clientX, y: e.clientY })
+        longPressTimerRef.current = undefined
+      }, 500) as unknown as number
+    }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
     movedRef.current = true
+    cancelLongPress()
+    setContextMenu(null)
     const point = toContentPoint(e.clientX, e.clientY)
 
     if (drag.kind === 'move') {
@@ -130,6 +153,8 @@ export function TimelineClip(props: TimelineClipProps) {
 
   function endDrag(e: React.PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
+    cancelLongPress()
+    setContextMenu(null)
     if (!movedRef.current) {
       onSelect(clip.id)
     } else if (drag.kind === 'move') {
@@ -235,6 +260,51 @@ export function TimelineClip(props: TimelineClipProps) {
             style={{ width: HANDLE_WIDTH_PX, touchAction: 'none' }}
           />
         </>
+      )}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-card border border-border rounded-md shadow-lg min-w-48 overflow-hidden"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              const midMicros = clip.startMicros + clip.durationMicros / 2
+              onSplit?.(midMicros)
+              setContextMenu(null)
+            }}
+          >
+            ✂️ Split
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDuplicate?.()
+              setContextMenu(null)
+            }}
+          >
+            📋 Duplicate
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDelete?.(false)
+              setContextMenu(null)
+            }}
+          >
+            🗑️ Delete
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDelete?.(true)
+              setContextMenu(null)
+            }}
+          >
+            🗑️ Delete + Ripple
+          </button>
+        </div>
       )}
     </div>
   )

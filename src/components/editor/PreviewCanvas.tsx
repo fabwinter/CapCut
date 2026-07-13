@@ -321,6 +321,11 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
                 {renderError}
               </div>
             )}
+            {playheadMicros >= projectDurationMicros(doc) && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-white/40 text-sm">End of project — 🔄 Rewind to continue</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
