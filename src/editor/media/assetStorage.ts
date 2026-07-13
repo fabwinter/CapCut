@@ -1,4 +1,4 @@
-import { fileExists, getAssetDir, readFile, writeFile } from '#/storage/opfs'
+import { fileExists, getAssetDir, getProjectDir, readFile, writeFile } from '#/storage/opfs'
 
 /**
  * Fixed filenames inside an asset's OPFS directory
@@ -11,6 +11,7 @@ const PROXY_FILENAME = 'proxy.mp4'
 const WAVEFORM_FILENAME = 'waveform.f32'
 const THUMBS_DIR = 'thumbs'
 const THUMBS_MANIFEST = 'manifest.json'
+const POSTER_FILENAME = 'poster.jpg'
 
 export interface ThumbnailManifest {
   count: number
@@ -86,4 +87,17 @@ export async function readThumbnail(projectId: string, assetId: string, index: n
   const assetDir = await getAssetDir(projectId, assetId, false)
   const thumbsDir = await assetDir.getDirectoryHandle(THUMBS_DIR)
   return readFile(thumbsDir, `${index}.jpg`)
+}
+
+export async function writePoster(projectId: string, blob: Blob): Promise<void> {
+  const projectDir = await getProjectDir(projectId)
+  await writeFile(projectDir, POSTER_FILENAME, blob)
+}
+
+export async function readPoster(projectId: string): Promise<File | undefined> {
+  const projectDir = await getProjectDir(projectId, false).catch(() => undefined)
+  if (!projectDir) return undefined
+  const exists = await fileExists(projectDir, POSTER_FILENAME)
+  if (!exists) return undefined
+  return readFile(projectDir, POSTER_FILENAME)
 }

@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { formatDistanceToNow } from 'date-fns'
 import { DownloadIcon, FilmIcon, LoaderCircleIcon, MoreVerticalIcon, PlusIcon, UploadIcon } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertDialog,
@@ -34,6 +34,7 @@ import { StorageMeter } from '#/components/StorageMeter'
 import { ASPECT_RATIO_PRESETS } from '#/editor/doc/aspectRatioPresets'
 import { projectDurationMicros, type ProjectDoc } from '#/editor/doc/schema'
 import { microsToSeconds } from '#/editor/doc/time'
+import { readPoster } from '#/editor/media/assetStorage'
 import { exportProjectBackup, restoreProjectBackup } from '#/storage/backup'
 import { useProjects } from '#/storage/useProjects'
 
@@ -44,6 +45,31 @@ function formatDuration(micros: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+function useProjectPoster(projectId: string): string | undefined {
+  const [posterUrl, setPosterUrl] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+    readPoster(projectId)
+      .then((file) => {
+        if (cancelled) return
+        if (file) {
+          const url = URL.createObjectURL(file)
+          setPosterUrl(url)
+          return () => URL.revokeObjectURL(url)
+        }
+      })
+      .catch(() => {
+        // No poster yet or read failed
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
+
+  return posterUrl
 }
 
 function Gallery() {
@@ -171,67 +197,20 @@ function Gallery() {
       ) : projects && projects.length > 0 ? (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
           {projects.map((project) => (
-            <Card
+            <ProjectCard
               key={project.id}
-              className="group relative cursor-pointer gap-0 py-0 transition hover:ring-foreground/20"
-              onClick={() =>
+              project={project}
+              onNavigate={() =>
                 navigate({ to: '/edit/$projectId', params: { projectId: project.id } })
               }
-            >
-              <div className="bg-muted relative flex aspect-video items-center justify-center">
-                <FilmIcon className="text-muted-foreground/40 size-8" />
-                <span className="absolute right-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-[0.6875rem] text-white">
-                  {formatDuration(projectDurationMicros(project))}
-                </span>
-              </div>
-              <div className="flex items-start justify-between gap-2 p-3">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{project.name}</p>
-                  <p className="text-muted-foreground mt-0.5 text-xs">
-                    {formatDistanceToNow(project.modifiedAt, { addSuffix: true })}
-                  </p>
-                </div>
-                {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- swallow taps so they don't bubble to the card's navigate-to-editor handler */}
-                <div className="-mr-1 -mt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-lg"
-                          aria-label={`Actions for ${project.name}`}
-                        />
-                      }
-                    >
-                      <MoreVerticalIcon className="size-4" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setRenameTarget(project)
-                          setRenameValue(project.name)
-                        }}
-                      >
-                        Rename
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => duplicateProject(project.id)}>
-                        Duplicate
-                      </DropdownMenuItem>
-                      <DropdownMenuItem data-action="backup-project" onClick={() => handleBackup(project)}>
-                        <DownloadIcon className="size-3.5" />
-                        Backup
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => setDeleteTarget(project)}
-                      >
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            </Card>
+              onRename={() => {
+                setRenameTarget(project)
+                setRenameValue(project.name)
+              }}
+              onDuplicate={() => duplicateProject(project.id)}
+              onBackup={() => handleBackup(project)}
+              onDelete={() => setDeleteTarget(project)}
+            />
           ))}
         </div>
       ) : (
@@ -337,5 +316,78 @@ function Gallery() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  )
+}
+
+interface ProjectCardProps {
+  project: ProjectDoc
+  onNavigate: () => void
+  onRename: () => void
+  onDuplicate: () => void
+  onBackup: () => void
+  onDelete: () => void
+}
+
+function ProjectCard({ project, onNavigate, onRename, onDuplicate, onBackup, onDelete }: ProjectCardProps) {
+  const posterUrl = useProjectPoster(project.id)
+
+  return (
+    <Card
+      className="group relative cursor-pointer gap-0 py-0 transition hover:ring-foreground/20"
+      onClick={onNavigate}
+    >
+      <div className="bg-muted relative flex aspect-video items-center justify-center overflow-hidden">
+        {posterUrl ? (
+          <img src={posterUrl} alt="" className="size-full object-cover" />
+        ) : (
+          <FilmIcon className="text-muted-foreground/40 size-8" />
+        )}
+        <span className="absolute right-2 bottom-2 rounded bg-black/70 px-1.5 py-0.5 text-[0.6875rem] text-white">
+          {formatDuration(projectDurationMicros(project))}
+        </span>
+      </div>
+      <div className="flex items-start justify-between gap-2 p-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">{project.name}</p>
+          <p className="text-muted-foreground mt-0.5 text-xs">
+            {formatDistanceToNow(project.modifiedAt, { addSuffix: true })}
+          </p>
+        </div>
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- swallow taps so they don't bubble to the card's navigate-to-editor handler */}
+        <div className="-mr-1 -mt-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-lg"
+                  aria-label={`Actions for ${project.name}`}
+                />
+              }
+            >
+              <MoreVerticalIcon className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onRename}>
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onDuplicate}>
+                Duplicate
+              </DropdownMenuItem>
+              <DropdownMenuItem data-action="backup-project" onClick={onBackup}>
+                <DownloadIcon className="size-3.5" />
+                Backup
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={onDelete}
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    </Card>
   )
 }
