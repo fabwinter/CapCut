@@ -65,14 +65,24 @@ interface MediaLibraryProps {
   onClipAdded?: () => void
 }
 
+function isSupportedMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('video/') || mimeType.startsWith('image/') || mimeType.startsWith('audio/')
+}
+
 export function MediaLibrary({ projectId, onClipAdded }: MediaLibraryProps) {
   const doc = useEditorStore((s) => s.doc)
   const dispatch = useEditorStore((s) => s.dispatch)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   function handleFiles(files: FileList | null) {
     if (!files) return
     for (const file of Array.from(files)) {
+      if (!isSupportedMimeType(file.type)) {
+        toast.error(`Unsupported file type: ${file.type || 'unknown'}`)
+        continue
+      }
       importMediaFile(projectId, file, dispatch)
         .then((assetId) => {
           const freshDoc = useEditorStore.getState().doc
@@ -85,11 +95,38 @@ export function MediaLibrary({ projectId, onClipAdded }: MediaLibraryProps) {
     }
   }
 
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === containerRef.current) {
+      setIsDragOver(false)
+    }
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    handleFiles(e.dataTransfer.files)
+  }
+
   const assets = doc?.assets ?? []
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-border flex items-center justify-between border-b p-2">
+    <div
+      ref={containerRef}
+      className="flex h-full flex-col"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      data-drag-over={isDragOver}>
+      <div className={`border-border flex items-center justify-between border-b p-2 transition-colors ${isDragOver ? 'bg-primary/10' : ''}`}>
         <span className="text-muted-foreground text-xs font-medium">Media</span>
         <Button
           variant="ghost"
