@@ -191,41 +191,47 @@ export function Inspector() {
         )}
       </Section>
 
-      {nextClip && (
-        <Section title="Transition to next clip">
-          <div className="flex flex-wrap gap-1">
-            {TRANSITION_TYPES.map((type) => (
-              <Button
-                key={type}
-                size="xs"
-                variant={clip.transitionOut?.type === type ? 'default' : 'outline'}
-                data-field={`transition-${type}`}
-                onClick={() =>
-                  dispatch(setTransitionOut(clip.id, { type, durationMicros: clip.transitionOut?.durationMicros ?? 500_000 }))
-                }
-              >
-                {TRANSITION_LABELS[type]}
-              </Button>
-            ))}
+      <Section title="Transition to next clip">
+        {nextClip ? (
+          <>
+            <div className="flex flex-wrap gap-1">
+              {TRANSITION_TYPES.map((type) => (
+                <Button
+                  key={type}
+                  size="xs"
+                  variant={clip.transitionOut?.type === type ? 'default' : 'outline'}
+                  data-field={`transition-${type}`}
+                  onClick={() =>
+                    dispatch(setTransitionOut(clip.id, { type, durationMicros: clip.transitionOut?.durationMicros ?? 500_000 }))
+                  }
+                >
+                  {TRANSITION_LABELS[type]}
+                </Button>
+              ))}
+              {clip.transitionOut && (
+                <Button size="xs" variant="ghost" data-field="transition-none" onClick={() => dispatch(setTransitionOut(clip.id, null))}>
+                  None
+                </Button>
+              )}
+            </div>
             {clip.transitionOut && (
-              <Button size="xs" variant="ghost" data-field="transition-none" onClick={() => dispatch(setTransitionOut(clip.id, null))}>
-                None
-              </Button>
+              <SliderRow
+                data-field="transition-duration"
+                label={`${microsToSeconds(clip.transitionOut.durationMicros).toFixed(1)}s`}
+                value={clip.transitionOut.durationMicros}
+                min={secondsToMicros(0.1)}
+                max={Math.max(secondsToMicros(0.2), Math.min(clip.durationMicros, nextClip.durationMicros))}
+                step={100_000}
+                onCommit={(v) => dispatch(setTransitionOut(clip.id, { type: clip.transitionOut!.type, durationMicros: v }))}
+              />
             )}
-          </div>
-          {clip.transitionOut && (
-            <SliderRow
-              data-field="transition-duration"
-              label={`${microsToSeconds(clip.transitionOut.durationMicros).toFixed(1)}s`}
-              value={clip.transitionOut.durationMicros}
-              min={secondsToMicros(0.1)}
-              max={Math.max(secondsToMicros(0.2), Math.min(clip.durationMicros, nextClip.durationMicros))}
-              step={100_000}
-              onCommit={(v) => dispatch(setTransitionOut(clip.id, { type: clip.transitionOut!.type, durationMicros: v }))}
-            />
-          )}
-        </Section>
-      )}
+          </>
+        ) : (
+          <p data-field="transition-unavailable" className="text-muted-foreground text-[0.6875rem]">
+            Move this clip flush against another clip on the same track to add a transition between them.
+          </p>
+        )}
+      </Section>
 
       <Section title="Keyframes">
         <div className="flex flex-wrap gap-1">

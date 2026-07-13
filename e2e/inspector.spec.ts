@@ -78,3 +78,12 @@ test('setting a transition between two adjacent clips shows the duration control
   await expect(page.locator('[data-field="transition-duration"]')).toBeVisible()
   await expect(page.locator('[data-field="transition-none"]')).toBeVisible()
 })
+
+test('a lone clip with no adjacent neighbor explains why transitions are unavailable, instead of hiding the section', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Inspector No Transition Test')
+  await page.locator('[data-clip]').first().click()
+
+  await expect(page.locator('[data-inspector]')).toContainText('Transition to next clip')
+  await expect(page.locator('[data-field="transition-unavailable"]')).toBeVisible()
+  await expect(page.locator('[data-field="transition-crossDissolve"]')).not.toBeVisible()
+})
