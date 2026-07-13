@@ -6,6 +6,7 @@ import { Input } from '#/components/ui/input'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { Timeline } from '#/components/editor/Timeline'
 import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
+import { EditorToolbar } from '#/components/editor/EditorToolbar'
 import { renameProject } from '#/editor/doc/commands/project'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { loadProject } from '#/storage/idb'
@@ -20,6 +21,7 @@ function Editor() {
   const { doc, canUndo, canRedo, isDirty, isSaving, openProject, dispatch, undo, redo, closeProject } =
     useEditorStore()
   const [loadState, setLoadState] = useState<LoadState>('loading')
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -110,7 +112,14 @@ function Editor() {
             <PreviewCanvas doc={doc} />
           </div>
 
-          <Timeline doc={doc} />
+          <div className="flex flex-col min-h-0">
+            <Timeline
+              doc={doc}
+              selectedClipId={selectedClipId}
+              onSelectClip={setSelectedClipId}
+            />
+            <EditorToolbar doc={doc} selectedClipId={selectedClipId} />
+          </div>
         </div>
       </main>
     </div>

@@ -9,12 +9,23 @@ import { trimClipStart, trimClipEnd } from '#/editor/doc/commands/clips'
 
 interface TimelineProps {
   doc: ProjectDoc
+  selectedClipId?: string | null
+  onSelectClip?: (clipId: string) => void
 }
 
-export function Timeline({ doc }: TimelineProps) {
+export function Timeline({
+  doc,
+  selectedClipId: externalSelectedId,
+  onSelectClip: onExternalSelectClip
+}: TimelineProps) {
   const { dispatch } = useEditorStore()
   const [pxPerSecond, setPxPerSecond] = useState(100)
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(externalSelectedId ?? null)
+
+  const handleSelectClip = useCallback((clipId: string) => {
+    setSelectedClipId(clipId)
+    onExternalSelectClip?.(clipId)
+  }, [onExternalSelectClip])
   const [scrollLeft, setScrollLeft] = useState(0)
   const timelineContainerRef = useRef<HTMLDivElement>(null)
   const fps = doc.settings.fps
@@ -29,10 +40,6 @@ export function Timeline({ doc }: TimelineProps) {
   }), 1_000_000) // Minimum 1 second
 
   const lanes = docToLanes(doc, pxPerSecond)
-
-  const handleSelectClip = useCallback((clipId: string) => {
-    setSelectedClipId(clipId)
-  }, [])
 
   const handleTrimClipStart = useCallback((
     clipId: string,
