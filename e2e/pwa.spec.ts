@@ -22,12 +22,17 @@ test('service worker registers and caches the app shell for offline use', async 
   // test load.
   await page.reload()
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null)
+  // Both caches must have content before going offline: the shell cache is
+  // what answers the offline navigation itself — waiting only on assets
+  // leaves a window where the navigation's cache.put hasn't landed yet.
   await page.waitForFunction(async () => {
     const keys = await caches.keys()
     const assetCacheKey = keys.find((k) => k.startsWith('capcut-assets-'))
-    if (!assetCacheKey) return false
-    const cache = await caches.open(assetCacheKey)
-    return (await cache.keys()).length > 0
+    const shellCacheKey = keys.find((k) => k.startsWith('capcut-shell-'))
+    if (!assetCacheKey || !shellCacheKey) return false
+    const assetCache = await caches.open(assetCacheKey)
+    const shellCache = await caches.open(shellCacheKey)
+    return (await assetCache.keys()).length > 0 && (await shellCache.keys()).length > 0
   })
 
   await context.setOffline(true)

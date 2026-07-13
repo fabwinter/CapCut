@@ -157,7 +157,10 @@ function Editor() {
           <MediaLibrary projectId={projectId} />
         </aside>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        {/* min-w-0: without it this flex item's min-width tracks the timeline's
+            intrinsic content width, and a long project pushes the Inspector and
+            even the preview canvas past the right edge of the screen. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="bg-black/90 flex min-h-0 flex-1 flex-col overflow-hidden">
             <PreviewCanvas projectId={projectId} doc={doc} />
           </div>

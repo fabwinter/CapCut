@@ -218,10 +218,16 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden">
+      {/* container-type:size lets the aspect box below contain-fit with pure CSS
+          (cqw/cqh). The old `height:100%` + max-w-full approach silently broke
+          the aspect ratio whenever width was the binding constraint. */}
+      <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden [container-type:size]">
         <div
-          className="bg-black flex max-h-full max-w-full ring-1 ring-white/10"
-          style={{ aspectRatio: `${doc.settings.width} / ${doc.settings.height}`, height: '100%' }}
+          className="bg-black ring-1 ring-white/10"
+          style={{
+            aspectRatio: `${doc.settings.width} / ${doc.settings.height}`,
+            width: `min(100cqw, 100cqh * ${(doc.settings.width / doc.settings.height).toFixed(6)})`,
+          }}
         >
           <div className="relative size-full">
             <canvas

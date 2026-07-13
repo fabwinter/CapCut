@@ -58,6 +58,32 @@ test('dragging a selected clip on the canvas moves it and undo reverts', async (
   await expect(overlay).toHaveAttribute('points', before!)
 })
 
+test('a long timeline never pushes the preview canvas or inspector off-screen', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Layout Blowout Test')
+
+  // Grow the timeline well past the viewport width (each clip is 3s; default
+  // zoom is 60px/s). Before the min-w-0 fix, the middle column's min-width
+  // tracked this content width and shoved the canvas + inspector off-screen.
+  const row = page.locator('[data-asset-row]').first()
+  for (let i = 2; i <= 8; i++) {
+    await row.locator('[data-add-to-timeline]').click()
+    // Clip rendering is virtualized, so wait on the doc-driven duration readout instead of DOM node count.
+    await expect(page.getByText(`0:00 / 0:${String(i * 3).padStart(2, '0')}`)).toBeVisible()
+  }
+
+  const viewport = page.viewportSize()!
+  const canvasBox = (await page.locator('[data-preview-canvas]').boundingBox())!
+  expect(canvasBox.x).toBeGreaterThanOrEqual(0)
+  expect(canvasBox.x + canvasBox.width).toBeLessThanOrEqual(viewport.width + 1)
+
+  const inspectorBox = (await page.locator('[data-inspector]').boundingBox())!
+  expect(inspectorBox.x + inspectorBox.width).toBeLessThanOrEqual(viewport.width + 1)
+
+  // And the canvas box must still be the project's aspect ratio (9:16 default),
+  // not distorted by a broken height/max-width interaction.
+  expect(canvasBox.width / canvasBox.height).toBeCloseTo(9 / 16, 1)
+})
+
 test('play toggles to pause and advances the transport time', async ({ page }) => {
   await createProjectWithClipOnTimeline(page, 'Playback Test')
 

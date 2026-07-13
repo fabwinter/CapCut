@@ -96,4 +96,43 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
     // GOP, so there should be no mid-stream reseek (no decoder recreated).
     expect(closedDecoders).toBe(0)
   })
+
+  it('a fatal decoder error resolves the request instead of wedging, and the next request recovers', async () => {
+    let failuresRemaining = 1
+    class FlakyDecoder {
+      private outputCb: (frame: ReturnType<typeof fakeFrame>) => void
+      private errorCb: (e: unknown) => void
+      constructor(init: { output: (frame: ReturnType<typeof fakeFrame>) => void; error: (e: unknown) => void }) {
+        this.outputCb = init.output
+        this.errorCb = init.error
+      }
+      configure(): void {}
+      decode(chunk: { timestamp: number }): void {
+        decodeCallLog.push(chunk.timestamp)
+        if (failuresRemaining > 0 && decodeCallLog.length === 3) {
+          failuresRemaining--
+          setTimeout(() => this.errorCb(new Error('hardware decode failed')), 5)
+          return
+        }
+        setTimeout(() => this.outputCb(fakeFrame()), 5)
+      }
+      async flush(): Promise<void> {}
+      close(): void {
+        closedDecoders++
+      }
+    }
+    vi.stubGlobal('VideoDecoder', FlakyDecoder)
+
+    const manager = new FrameSourceManager()
+    const file = new File([], 'proxy.mp4')
+
+    // Fails on its 3rd sample — must resolve (empty-handed), never hang.
+    const failed = await manager.getFrame('asset-1', file, 5 * 33_333)
+    expect(failed).toBeUndefined()
+
+    // The queue must not be wedged: a fresh request reconfigures a decoder,
+    // reseeks from the keyframe, and succeeds.
+    const recovered = await manager.getFrame('asset-1', file, 5 * 33_333)
+    expect(recovered).toBeDefined()
+  })
 })
