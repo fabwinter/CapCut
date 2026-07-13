@@ -11,6 +11,8 @@ import { ProjectSettingsDialog } from '#/components/editor/ProjectSettingsDialog
 import { Timeline } from '#/components/editor/timeline/Timeline'
 import { deleteClip } from '#/editor/doc/commands/clips'
 import { renameProject } from '#/editor/doc/commands/project'
+import { projectDurationMicros } from '#/editor/doc/schema'
+import { frameDurationMicros } from '#/editor/doc/time'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { loadProject } from '#/storage/idb'
 
@@ -33,6 +35,8 @@ function Editor() {
     isDirty,
     isSaving,
     selectedClipId,
+    playheadMicros,
+    setPlayhead,
     openProject,
     dispatch,
     undo,
@@ -69,11 +73,31 @@ function Editor() {
       }
       if (e.key === 'Escape' && selectedClipId) {
         selectClip(null)
+        return
+      }
+      if (e.key === 'Home') {
+        e.preventDefault()
+        setPlayhead(0)
+        return
+      }
+      if (e.key === 'End') {
+        e.preventDefault()
+        if (doc) setPlayhead(projectDurationMicros(doc))
+        return
+      }
+      if (e.key === 'ArrowLeft' && doc) {
+        e.preventDefault()
+        setPlayhead(Math.max(0, playheadMicros - frameDurationMicros(doc.settings.fps)))
+        return
+      }
+      if (e.key === 'ArrowRight' && doc) {
+        e.preventDefault()
+        setPlayhead(playheadMicros + frameDurationMicros(doc.settings.fps))
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, dispatch, selectClip, selectedClipId, exportOpen])
+  }, [undo, redo, dispatch, selectClip, selectedClipId, exportOpen, doc, playheadMicros, setPlayhead])
 
   useEffect(() => {
     let cancelled = false

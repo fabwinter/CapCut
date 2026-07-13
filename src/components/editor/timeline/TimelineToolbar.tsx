@@ -1,9 +1,14 @@
 import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CopyIcon,
   FilmIcon,
   LayersIcon,
+  Maximize2Icon,
   Music2Icon,
   ScissorsIcon,
+  SkipBackIcon,
+  SkipForwardIcon,
   TrashIcon,
   TypeIcon,
   ZoomInIcon,
@@ -22,6 +27,11 @@ interface TimelineToolbarProps {
   onAddTrack: (kind: TrackKind) => void
   onZoomIn: () => void
   onZoomOut: () => void
+  onZoomToFit: () => void
+  onJumpToStart: () => void
+  onJumpToEnd: () => void
+  onStepFrameBack: () => void
+  onStepFrameForward: () => void
 }
 
 const TRACK_KINDS: { kind: TrackKind; icon: typeof FilmIcon; label: string }[] = [
@@ -40,6 +50,11 @@ export function TimelineToolbar({
   onAddTrack,
   onZoomIn,
   onZoomOut,
+  onZoomToFit,
+  onJumpToStart,
+  onJumpToEnd,
+  onStepFrameBack,
+  onStepFrameForward,
 }: TimelineToolbarProps) {
   const canSplit =
     !!selectedClip &&
@@ -96,12 +111,42 @@ export function TimelineToolbar({
         </div>
       )}
 
+      <div className="ml-2 flex items-center gap-1 border-l border-border pl-2">
+        <Button variant="ghost" size="icon-sm" aria-label="Jump to start" data-action="jump-to-start" onClick={onJumpToStart}>
+          <SkipBackIcon className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Step back one frame"
+          data-action="step-frame-back"
+          onClick={onStepFrameBack}
+        >
+          <ChevronLeftIcon className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Step forward one frame"
+          data-action="step-frame-forward"
+          onClick={onStepFrameForward}
+        >
+          <ChevronRightIcon className="size-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Jump to end" data-action="jump-to-end" onClick={onJumpToEnd}>
+          <SkipForwardIcon className="size-3.5" />
+        </Button>
+      </div>
+
       <div className="ml-auto flex items-center gap-1">
         <Button variant="ghost" size="icon-sm" aria-label="Zoom out" data-action="zoom-out" onClick={onZoomOut}>
           <ZoomOutIcon className="size-3.5" />
         </Button>
         <Button variant="ghost" size="icon-sm" aria-label="Zoom in" data-action="zoom-in" onClick={onZoomIn}>
           <ZoomInIcon className="size-3.5" />
+        </Button>
+        <Button variant="ghost" size="icon-sm" aria-label="Zoom to fit" data-action="zoom-to-fit" onClick={onZoomToFit}>
+          <Maximize2Icon className="size-3.5" />
         </Button>
       </div>
     </div>

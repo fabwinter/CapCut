@@ -92,3 +92,61 @@ test('deleting the selected clip removes it from the timeline', async ({ page })
   await page.getByRole('button', { name: 'Undo' }).click()
   await expect(page.locator('[data-clip]')).toHaveCount(1)
 })
+
+test('jump-to-end and jump-to-start move the playhead across the project', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Jump Nav Test')
+  const playhead = page.locator('[data-playhead]')
+  const startBox = await playhead.boundingBox()
+
+  await page.locator('[data-action="jump-to-end"]').click()
+  const endBox = await playhead.boundingBox()
+  expect(endBox!.x).toBeGreaterThan(startBox!.x + 5)
+
+  await page.locator('[data-action="jump-to-start"]').click()
+  const backAtStart = await playhead.boundingBox()
+  expect(Math.abs(backAtStart!.x - startBox!.x)).toBeLessThan(2)
+})
+
+test('frame step buttons nudge the playhead forward and back by a single frame', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Frame Step Test')
+  const playhead = page.locator('[data-playhead]')
+  const before = await playhead.boundingBox()
+
+  await page.locator('[data-action="step-frame-forward"]').click()
+  const afterForward = await playhead.boundingBox()
+  expect(afterForward!.x).toBeGreaterThan(before!.x)
+
+  await page.locator('[data-action="step-frame-back"]').click()
+  const afterBack = await playhead.boundingBox()
+  expect(Math.abs(afterBack!.x - before!.x)).toBeLessThan(1)
+})
+
+test('zoom-to-fit scales the timeline so the whole project fills the visible viewport', async ({ page }) => {
+  const clip = await createProjectWithClipOnTimeline(page, 'Zoom To Fit Test')
+
+  // Zoom far out first so the short 3s default clip is tiny on screen.
+  for (let i = 0; i < 6; i++) await page.locator('[data-action="zoom-out"]').click()
+  const zoomedOut = await clip.boundingBox()
+
+  await page.locator('[data-action="zoom-to-fit"]').click()
+  const fitted = await clip.boundingBox()
+  expect(fitted!.width).toBeGreaterThan(zoomedOut!.width)
+})
+
+test('Home/End/ArrowLeft/ArrowRight keyboard shortcuts move the playhead', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Keyboard Nav Test')
+  const playhead = page.locator('[data-playhead]')
+  const startBox = await playhead.boundingBox()
+
+  await page.keyboard.press('End')
+  const endBox = await playhead.boundingBox()
+  expect(endBox!.x).toBeGreaterThan(startBox!.x + 5)
+
+  await page.keyboard.press('ArrowLeft')
+  const afterLeft = await playhead.boundingBox()
+  expect(afterLeft!.x).toBeLessThan(endBox!.x)
+
+  await page.keyboard.press('Home')
+  const backAtStart = await playhead.boundingBox()
+  expect(Math.abs(backAtStart!.x - startBox!.x)).toBeLessThan(2)
+})
