@@ -23,6 +23,7 @@ function Editor() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
   const [mobilePanel, setMobilePanel] = useState<'media' | 'timeline'>('timeline')
+  const [currentTime, setCurrentTime] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -111,7 +112,7 @@ function Editor() {
 
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex-1 overflow-hidden">
-            <PreviewCanvas doc={doc} />
+            <PreviewCanvas doc={doc} onTimeChange={setCurrentTime} />
           </div>
 
           <div className="flex flex-col min-h-0">
@@ -155,6 +156,7 @@ function Editor() {
                   doc={doc}
                   selectedClipId={selectedClipId}
                   onSelectClip={setSelectedClipId}
+                  currentTime={currentTime}
                 />
                 <EditorToolbar doc={doc} selectedClipId={selectedClipId} />
               </>

@@ -11,12 +11,14 @@ interface TimelineProps {
   doc: ProjectDoc
   selectedClipId?: string | null
   onSelectClip?: (clipId: string) => void
+  currentTime?: number
 }
 
 export function Timeline({
   doc,
   selectedClipId: externalSelectedId,
-  onSelectClip: onExternalSelectClip
+  onSelectClip: onExternalSelectClip,
+  currentTime = 0
 }: TimelineProps) {
   const { dispatch } = useEditorStore()
   const [pxPerSecond, setPxPerSecond] = useState(100)
@@ -90,10 +92,10 @@ export function Timeline({
       />
 
       {/* Tracks container */}
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex-1 overflow-hidden flex flex-col relative">
         <div
           ref={timelineContainerRef}
-          className="flex-1 overflow-auto"
+          className="flex-1 overflow-auto relative"
           onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
         >
           <div className="flex flex-col">
@@ -109,6 +111,14 @@ export function Timeline({
               />
             ))}
           </div>
+
+          {/* Playhead indicator */}
+          <div
+            className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-10"
+            style={{
+              left: `${(currentTime / 1_000_000) * pxPerSecond}px`,
+            }}
+          />
         </div>
       </div>
 
