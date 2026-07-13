@@ -34,6 +34,17 @@ class AssetDecoderSession {
   private cacheBytes = 0
   private readonly loaded: Promise<void>
   private pendingOutputs: ((frame: VideoFrame) => void)[] = []
+  // Real playback fires a render request every rAF without waiting for the
+  // previous one's decode to finish (Transport.tick's `void renderFrameAt`),
+  // and decode round-trips on real hardware routinely outlast one frame
+  // interval. Without this queue, two overlapping getFrameAt calls would
+  // both drive `decoder.decode()` on the same VideoDecoder at once — their
+  // calls interleave, `pendingOutputs.shift()` resolves the wrong promise
+  // with the wrong frame, and the scrambled decode order breaks the H.264
+  // reference-frame chain, producing corrupted blocky output. Every actual
+  // decode (cache misses only) is serialized through this chain so only one
+  // logical request drives the decoder at a time.
+  private queue: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly file: File,
@@ -123,11 +134,36 @@ class AssetDecoderSession {
     this.cache.set(index, frame)
   }
 
-  async getFrameAt(timestampMicros: number): Promise<VideoFrame | undefined> {
+  async getFrameAt(timestampMicros: number, isStale?: () => boolean): Promise<VideoFrame | undefined> {
     await this.loaded
     if (this.samples.length === 0) return undefined
     const targetIndex = this.findSampleIndex(timestampMicros)
 
+    const cached = this.cache.get(targetIndex)
+    if (cached) {
+      this.touch(targetIndex, cached)
+      return cached.clone()
+    }
+
+    // Queue behind whatever decode is currently in flight — see the `queue`
+    // field comment for why concurrent decode loops on one VideoDecoder
+    // corrupt output. `.catch` keeps one failed request from wedging the
+    // chain for whoever queues up behind it. Re-check staleness once our
+    // turn actually comes up: a fast-ticking playback loop can queue several
+    // requests before any of them run, and there's no point decoding frames
+    // for a render call that's already been superseded.
+    const turn = this.queue.then(() => (isStale?.() ? undefined : this.decodeTo(targetIndex)))
+    this.queue = turn.then(
+      () => undefined,
+      () => undefined,
+    )
+    return turn
+  }
+
+  /** Decodes forward to `targetIndex`, reseeking to the nearest keyframe first if necessary. Only ever called with one call in flight at a time — see `queue`. */
+  private async decodeTo(targetIndex: number): Promise<VideoFrame | undefined> {
+    // A queued call ahead of us may have already decoded (and cached) this
+    // exact frame by the time our turn comes up.
     const cached = this.cache.get(targetIndex)
     if (cached) {
       this.touch(targetIndex, cached)
@@ -193,7 +229,7 @@ export class FrameSourceManager {
     private readonly cacheByteBudgetPerAsset = DEFAULT_CACHE_BYTES_PER_ASSET,
   ) {}
 
-  async getFrame(assetId: string, file: File, timestampMicros: number): Promise<VideoFrame | undefined> {
+  async getFrame(assetId: string, file: File, timestampMicros: number, isStale?: () => boolean): Promise<VideoFrame | undefined> {
     let session = this.sessions.get(assetId)
     if (session) {
       // Re-insert to mark most-recently-used (Map preserves insertion order).
@@ -210,7 +246,7 @@ export class FrameSourceManager {
       session = new AssetDecoderSession(file, this.cacheByteBudgetPerAsset)
       this.sessions.set(assetId, session)
     }
-    return session.getFrameAt(timestampMicros)
+    return session.getFrameAt(timestampMicros, isStale)
   }
 
   closeAll(): void {
