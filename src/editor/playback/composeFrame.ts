@@ -206,9 +206,19 @@ export async function composeFrame(
               })
             }
 
+            // The incoming clip hasn't reached its own timeline slot yet at
+            // `atMicros` (transitions overlap into the tail of the outgoing
+            // clip, before the next clip's official start) — fetching it at
+            // a fixed `next.inPointMicros` would freeze it on its first
+            // frame for the whole transition instead of playing forward, so
+            // its local position has to be derived from how far into the
+            // transition we are, the same way findActiveClips derives it
+            // from a clip's own elapsed time.
+            const elapsedIntoNext = atMicros - transitionStart
+            const nextLocalMicros = next.inPointMicros + elapsedIntoNext * next.speed
             const nextResolved = next.text
               ? { source: rasterizeText(next.text, doc.settings.width, doc.settings.height), width: doc.settings.width, height: doc.settings.height }
-              : await resolveClipSource(doc, next, next.inPointMicros, framesToClose, resources, reportClipError)
+              : await resolveClipSource(doc, next, nextLocalMicros, framesToClose, resources, reportClipError)
             if (stale()) return
             if (nextResolved) {
               const nextQuad = computeQuadCorners(
