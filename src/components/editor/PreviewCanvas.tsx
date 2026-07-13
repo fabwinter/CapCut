@@ -1,4 +1,4 @@
-import { PauseIcon, PlayIcon } from 'lucide-react'
+import { PauseIcon, PlayIcon, RotateCcwIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { setClipTransform } from '#/editor/doc/commands/transform'
@@ -42,6 +42,7 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
   const transportRef = useRef<Transport | null>(null)
   const gestureRef = useRef<ManipulateGesture | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isLooping, setIsLooping] = useState(false)
   const [selectionQuad, setSelectionQuad] = useState<Quad | undefined>(undefined)
   const [renderError, setRenderError] = useState<string | undefined>(undefined)
 
@@ -96,6 +97,12 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
     if (!transport) return
     if (transport.isPlaying) transport.pause()
     else void transport.play(playheadMicros)
+  }
+
+  function toggleLoop() {
+    const newLooping = !isLooping
+    setIsLooping(newLooping)
+    transportRef.current?.setLoop(newLooping)
   }
 
   // Space toggles play/pause — a desktop-bonus shortcut (ARCHITECTURE §1).
@@ -283,6 +290,17 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
           onClick={togglePlay}
         >
           {isPlaying ? <PauseIcon className="size-3.5" /> : <PlayIcon className="size-3.5" />}
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Loop playback"
+          data-action="toggle-loop"
+          data-active={isLooping}
+          onClick={toggleLoop}
+          className={isLooping ? 'text-primary' : ''}
+        >
+          <RotateCcwIcon className="size-3.5" />
         </Button>
         <span className="text-[0.6875rem] text-white/70 tabular-nums">
           {formatTime(current)} / {formatTime(duration)}
