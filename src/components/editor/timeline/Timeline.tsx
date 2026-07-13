@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { deleteClip, duplicateClip, moveClip, splitClip, trimClipEnd, trimClipStart } from '#/editor/doc/commands/clips'
 import { addTrack, setTrackLocked, setTrackMuted } from '#/editor/doc/commands/tracks'
-import type { ProjectDoc, TrackKind } from '#/editor/doc/schema'
+import { projectDurationMicros, type ProjectDoc, type TrackKind } from '#/editor/doc/schema'
 import {
   clampZoom,
   computeTimelineLayout,
@@ -10,7 +10,7 @@ import {
   timeToPx,
   visibleClipIds,
 } from '#/editor/doc/selectors/layout'
-import type { Micros } from '#/editor/doc/time'
+import { frameDurationMicros, type Micros } from '#/editor/doc/time'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { usePanZoom } from './panZoom'
 import { RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler'
@@ -95,6 +95,26 @@ export function Timeline({ projectId, doc }: TimelineProps) {
     setPxPerSecond((prev) => clampZoom(prev * factor))
   }
 
+  function zoomToFit() {
+    const durationMicros = projectDurationMicros(doc)
+    if (durationMicros <= 0 || viewportWidth <= 0) return
+    const availableWidth = Math.max(1, viewportWidth - TRACK_HEADER_WIDTH_PX)
+    setPxPerSecond(clampZoom(availableWidth / (durationMicros / 1_000_000)))
+  }
+
+  function stepFrame(direction: 1 | -1) {
+    const step = frameDurationMicros(doc.settings.fps)
+    setPlayhead(Math.max(0, playheadMicros + direction * step))
+  }
+
+  function jumpToStart() {
+    setPlayhead(0)
+  }
+
+  function jumpToEnd() {
+    setPlayhead(projectDurationMicros(doc))
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <TimelineToolbar
@@ -110,6 +130,11 @@ export function Timeline({ projectId, doc }: TimelineProps) {
         onAddTrack={(kind: TrackKind) => dispatch(addTrack(kind))}
         onZoomIn={() => zoomBy(ZOOM_STEP_FACTOR)}
         onZoomOut={() => zoomBy(1 / ZOOM_STEP_FACTOR)}
+        onZoomToFit={zoomToFit}
+        onJumpToStart={jumpToStart}
+        onJumpToEnd={jumpToEnd}
+        onStepFrameBack={() => stepFrame(-1)}
+        onStepFrameForward={() => stepFrame(1)}
       />
 
       <div

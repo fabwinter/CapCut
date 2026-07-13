@@ -1,13 +1,38 @@
 import { createFile, DataStream, Endianness, MP4BoxBuffer, type ISOFile, type Movie, type Track } from 'mp4box'
 
+export type VideoRotation = 0 | 90 | 180 | 270
+
 export interface VideoTrackInfo {
   id: number
   codec: string
+  /** Raw coded (pre-rotation) dimensions — what the decoder actually produces frames at. */
   width: number
   height: number
   durationMicros: number
   fps?: number
   description?: Uint8Array
+  /** Clockwise rotation to apply to decoded frames to display them upright — see `rotationFromMatrix`. */
+  rotation: VideoRotation
+}
+
+/**
+ * Phones commonly store portrait video as landscape *pixel* data plus a
+ * rotation in the track header's display matrix (ISO/IEC 14496-12 §8.7.2) —
+ * a 3x3 transform, 16.16 fixed-point for the parts that matter here. Players
+ * that ignore it (as this app did until now) show the sensor's raw
+ * orientation, which is sideways or upside down for most phone-shot
+ * portrait footage. Only pure 90°-step rotations (no skew/arbitrary angle,
+ * which real devices don't produce) are recognized; anything else — no
+ * matrix, or something odd — falls back to "no rotation" rather than
+ * guessing.
+ */
+export function rotationFromMatrix(matrix: ArrayLike<number> | undefined): VideoRotation {
+  if (!matrix || matrix.length < 2) return 0
+  const a = matrix[0] / 65536
+  const b = matrix[1] / 65536
+  const degrees = Math.round((Math.atan2(b, a) * 180) / Math.PI)
+  const normalized = ((degrees % 360) + 360) % 360
+  return normalized === 90 || normalized === 180 || normalized === 270 ? normalized : 0
 }
 
 /** Extracts the raw codec description (avcC/hvcC/vpcC/av1C payload) WebCodecs needs to configure a decoder. */
@@ -38,6 +63,7 @@ function estimateFps(track: Track): number | undefined {
 
 export interface ContainerInfo {
   durationMicros: number
+  /** Display dimensions — already swapped for a 90°/270° rotation, unlike `VideoTrackInfo.width/height`. */
   width?: number
   height?: number
   fps?: number
@@ -45,6 +71,7 @@ export interface ContainerInfo {
   hasAudio: boolean
   videoCodec?: string
   audioCodec?: string
+  rotation?: VideoRotation
 }
 
 /** Parses container metadata (duration, dimensions, fps, codecs) without decoding or reading sample data. */
@@ -64,15 +91,20 @@ export function probeContainer(file: File): Promise<ContainerInfo> {
       settled = true
       const videoTrack = movie.videoTracks[0]
       const audioTrack = movie.audioTracks[0]
+      const rotation = rotationFromMatrix(videoTrack?.matrix)
+      const swapped = rotation === 90 || rotation === 270
+      const codedWidth = videoTrack?.video?.width
+      const codedHeight = videoTrack?.video?.height
       resolve({
         durationMicros: Math.round((movie.duration / movie.timescale) * 1_000_000),
-        width: videoTrack?.video?.width,
-        height: videoTrack?.video?.height,
+        width: swapped ? codedHeight : codedWidth,
+        height: swapped ? codedWidth : codedHeight,
         fps: videoTrack ? estimateFps(videoTrack) : undefined,
         hasVideo: movie.videoTracks.length > 0,
         hasAudio: movie.audioTracks.length > 0,
         videoCodec: videoTrack?.codec,
         audioCodec: audioTrack?.codec,
+        rotation,
       })
     }
 
@@ -123,6 +155,7 @@ export function demuxVideoTrack(file: File, callbacks: DemuxVideoCallbacks): Pro
         durationMicros: Math.round((track.duration / track.timescale) * 1_000_000),
         fps: estimateFps(track),
         description: getCodecDescription(isoFile, track),
+        rotation: rotationFromMatrix(track.matrix),
       })
       isoFile.setExtractionOptions(track.id, undefined, { nbSamples: 200 })
       isoFile.start()

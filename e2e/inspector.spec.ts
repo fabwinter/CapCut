@@ -78,3 +78,29 @@ test('setting a transition between two adjacent clips shows the duration control
   await expect(page.locator('[data-field="transition-duration"]')).toBeVisible()
   await expect(page.locator('[data-field="transition-none"]')).toBeVisible()
 })
+
+test('a lone clip with no adjacent neighbor explains why transitions are unavailable, instead of hiding the section', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Inspector No Transition Test')
+  await page.locator('[data-clip]').first().click()
+
+  await expect(page.locator('[data-inspector]')).toContainText('Transition to next clip')
+  await expect(page.locator('[data-field="transition-unavailable"]')).toBeVisible()
+  await expect(page.locator('[data-field="transition-crossDissolve"]')).not.toBeVisible()
+})
+
+test('rotate 90 button steps the clip rotation and undo reverts it', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Inspector Rotate Test')
+  await page.locator('[data-clip]').first().click()
+
+  const degrees = page.locator('[data-field="rotation-degrees"]')
+  await expect(degrees).toHaveText('0°')
+
+  await page.locator('[data-field="rotate-90"]').click()
+  await expect(degrees).toHaveText('90°')
+
+  await page.locator('[data-field="rotate-90"]').click()
+  await expect(degrees).toHaveText('180°')
+
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(degrees).toHaveText('90°')
+})
