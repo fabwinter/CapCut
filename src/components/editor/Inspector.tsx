@@ -102,6 +102,25 @@ export function Inspector() {
               className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent"
             />
           </label>
+          <SliderRow
+            data-field="text-stroke-width"
+            label={`Stroke: ${clip.text.strokeWidth ?? 0}px`}
+            value={clip.text.strokeWidth ?? 0}
+            min={0}
+            max={10}
+            step={0.5}
+            onCommit={(v) => dispatch(setClipText(clip.id, { strokeWidth: v }))}
+          />
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Stroke color</span>
+            <input
+              type="color"
+              data-field="text-stroke-color"
+              value={clip.text.strokeColor ?? '#000000'}
+              onChange={(e) => dispatch(setClipText(clip.id, { strokeColor: e.target.value }))}
+              className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent"
+            />
+          </label>
           <div className="flex gap-1">
             {TEXT_ALIGNS.map((align) => (
               <Button
