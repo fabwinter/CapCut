@@ -245,9 +245,21 @@ export async function composeFrame(
 
   compositor.clear(r, g, b, 1)
   for (const draw of draws) {
-    if (draw.scissor) compositor.setScissor(draw.scissor.x, draw.scissor.y, draw.scissor.width, draw.scissor.height)
-    compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity, draw.adjustments, draw.lut)
-    if (draw.scissor) compositor.clearScissor()
+    // Per-draw catch: a throwing draw (e.g. a texture upload the browser
+    // rejects) must not kill the rest of the frame — and it MUST reach the
+    // error banner. This loop sat outside the per-clip try/catch above, so
+    // a failure here used to reject the whole composeFrame promise with no
+    // onClipError and no onFrameRendered: a permanently black canvas with
+    // zero visible diagnostics.
+    try {
+      if (draw.scissor) compositor.setScissor(draw.scissor.x, draw.scissor.y, draw.scissor.width, draw.scissor.height)
+      compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity, draw.adjustments, draw.lut)
+    } catch (err) {
+      console.error('Failed to draw layer', draw.slotKey, err)
+      reportClipError(draw.slotKey, err instanceof Error ? err.message : String(err))
+    } finally {
+      if (draw.scissor) compositor.clearScissor()
+    }
   }
   for (const frame of framesToClose) frame.close()
   resources.onFrameRendered?.(hadError)
