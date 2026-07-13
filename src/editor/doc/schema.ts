@@ -199,7 +199,7 @@ export function createDefaultProjectSettings(): ProjectSettings {
   return { width: 1080, height: 1920, fps: 30, background: '#000000' }
 }
 
-export function createEmptyProjectDoc(name: string): ProjectDoc {
+export function createEmptyProjectDoc(name: string, settingsOverride?: Partial<ProjectSettings>): ProjectDoc {
   const now = Date.now()
   return {
     id: createId(),
@@ -207,7 +207,7 @@ export function createEmptyProjectDoc(name: string): ProjectDoc {
     name,
     createdAt: now,
     modifiedAt: now,
-    settings: createDefaultProjectSettings(),
+    settings: { ...createDefaultProjectSettings(), ...settingsOverride },
     assets: [],
     tracks: [
       { id: createId(), kind: 'video', name: 'Video 1', muted: false, locked: false, clips: [] },

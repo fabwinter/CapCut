@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon } from 'lucide-react'
+import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, SettingsIcon, UndoIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -7,6 +7,7 @@ import { ExportDialog } from '#/components/editor/ExportDialog'
 import { Inspector } from '#/components/editor/Inspector'
 import { MediaLibrary } from '#/components/editor/MediaLibrary'
 import { PreviewCanvas } from '#/components/editor/PreviewCanvas'
+import { ProjectSettingsDialog } from '#/components/editor/ProjectSettingsDialog'
 import { Timeline } from '#/components/editor/timeline/Timeline'
 import { deleteClip } from '#/editor/doc/commands/clips'
 import { renameProject } from '#/editor/doc/commands/project'
@@ -41,6 +42,7 @@ function Editor() {
   } = useEditorStore()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [exportOpen, setExportOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // Desktop bonus (ARCHITECTURE §1: secondary on iPad, but cheap and expected on desktop browsers).
   useEffect(() => {
@@ -146,6 +148,15 @@ function Editor() {
 
         <div className="ml-auto flex items-center gap-3">
           <SaveIndicator isDirty={isDirty} isSaving={isSaving} />
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            aria-label="Project settings"
+            data-action="project-settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <SettingsIcon className="size-4" />
+          </Button>
           <Button size="lg" className="h-9 px-4 text-sm" data-action="export" onClick={() => setExportOpen(true)}>
             Export
           </Button>
@@ -180,6 +191,8 @@ function Editor() {
         projectName={doc.name}
         doc={doc}
       />
+
+      <ProjectSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} doc={doc} dispatch={dispatch} />
     </div>
   )
 }

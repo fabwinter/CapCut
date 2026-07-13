@@ -13,6 +13,19 @@ describe('ProjectDoc schema', () => {
     expect(doc.tracks.map((t) => t.kind)).toEqual(['video', 'audio'])
   })
 
+  it('defaults to a portrait canvas when no settings override is given', () => {
+    const doc = createEmptyProjectDoc('My Project')
+    expect(doc.settings).toEqual({ width: 1080, height: 1920, fps: 30, background: '#000000' })
+  })
+
+  it('applies a partial settings override on top of the defaults', () => {
+    const doc = createEmptyProjectDoc('My Project', { width: 1920, height: 1080 })
+    expect(doc.settings.width).toBe(1920)
+    expect(doc.settings.height).toBe(1080)
+    expect(doc.settings.fps).toBe(30) // untouched default
+    expect(doc.settings.background).toBe('#000000') // untouched default
+  })
+
   it('rejects a doc with an unknown schema version', () => {
     const doc = createEmptyProjectDoc('My Project')
     expect(() => ProjectDocSchema.parse({ ...doc, schemaVersion: 999 })).toThrow()

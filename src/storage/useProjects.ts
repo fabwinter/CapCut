@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   createEmptyProjectDoc,
   type ProjectDoc,
+  type ProjectSettings,
 } from '#/editor/doc/schema'
 import { deleteProjectDoc, listProjects, saveProject } from '#/storage/idb'
 import { copyProjectAssets, deleteProjectAssets } from '#/storage/opfs'
@@ -18,12 +19,15 @@ export function useProjects() {
     refresh()
   }, [refresh])
 
-  const createProject = useCallback(async (name: string) => {
-    const doc = createEmptyProjectDoc(name)
-    await saveProject(doc)
-    await refresh()
-    return doc
-  }, [refresh])
+  const createProject = useCallback(
+    async (name: string, settings?: Partial<ProjectSettings>) => {
+      const doc = createEmptyProjectDoc(name, settings)
+      await saveProject(doc)
+      await refresh()
+      return doc
+    },
+    [refresh],
+  )
 
   const renameProjectById = useCallback(
     async (id: string, name: string) => {
