@@ -5,6 +5,7 @@ import type { Micros } from '#/editor/doc/time'
 import { microsToSeconds, secondsToMicros } from '#/editor/doc/time'
 import { Compositor } from '#/editor/playback/compositor'
 import { Transport } from '#/editor/playback/transport'
+import { FrameSource } from '#/editor/media/frameSource'
 import { Button } from '#/components/ui/button'
 
 interface PreviewCanvasProps {
@@ -25,6 +26,9 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
 
   const { width, height, fps, background } = doc.settings
 
+  // Create frame source for decoding video frames
+  const frameSourceRef = useRef<FrameSource | null>(null)
+
   // Initialize compositor and transport
   useEffect(() => {
     if (!canvasRef.current) return
@@ -36,6 +40,10 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
         height,
       })
       compositorRef.current = compositor
+
+      // Create frame source for this project
+      const frameSource = new FrameSource()
+      frameSourceRef.current = frameSource
 
       const durationMicros = Math.max(
         ...doc.tracks.map((track) => {
@@ -55,7 +63,7 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
       transport.onTimeChange((time) => {
         setCurrentTime(time)
         onTimeChange?.(time)
-        renderFrame(compositor, doc, time)
+        renderFrame(compositor, frameSource, doc, time)
       })
 
       transport.onPlayStateChanged(setIsPlaying)
@@ -69,16 +77,66 @@ export function PreviewCanvas({ doc, onTimeChange }: PreviewCanvasProps) {
     return () => {
       compositorRef.current?.dispose()
       transportRef.current?.close()
+      frameSourceRef.current = null
     }
   }, [doc, fps, width, height, background, onTimeChange])
 
   const renderFrame = useCallback(
-    (compositor: Compositor, doc: ProjectDoc, _timeMicros: Micros) => {
-      // Future: render actual composition
-      // For now, just clear and show background
+    (compositor: Compositor, frameSource: FrameSource, doc: ProjectDoc, timeMicros: Micros) => {
+      // Render background first
       compositor.renderBackground(doc.settings.background)
+
+      // Find all clips that are active at this time
+      for (const track of doc.tracks) {
+        if (track.kind === 'text' || track.kind === 'overlay') continue // Skip text/overlay for now
+
+        for (const clip of track.clips) {
+          // Check if clip is playing at this time
+          if (timeMicros < clip.startMicros || timeMicros >= clip.startMicros + clip.durationMicros) {
+            continue // Not playing
+          }
+
+          // Calculate time within the clip
+          const clipLocalTime = timeMicros - clip.startMicros
+
+          // Adjust for clip trim points and playback speed
+          const inPoint = clip.inPointMicros || 0
+          const sourceTime = inPoint + Math.floor(clipLocalTime / clip.speed)
+
+          // Get frame from source
+          if (clip.assetId) {
+            frameSource.getFrame(clip.assetId, sourceTime, fps, 'proxy')
+              .then((decodedFrame) => {
+                if (decodedFrame) {
+                  // Render the frame using compositor
+                  const frame = decodedFrame.frame
+
+                  // Calculate display size (fit to canvas)
+                  const scaleX = width / (frame.displayWidth || width)
+                  const scaleY = height / (frame.displayHeight || height)
+                  const scale = Math.min(scaleX, scaleY)
+
+                  compositor.renderClip({
+                    videoFrame: frame,
+                    imageData: undefined,
+                    opacity: clip.transform.opacity,
+                    x: clip.transform.x,
+                    y: clip.transform.y,
+                    scaleX: scale * clip.transform.scale,
+                    scaleY: scale * clip.transform.scale,
+                    rotation: clip.transform.rotation,
+                    blendMode: 'normal'
+                  })
+                }
+              })
+              .catch((err) => {
+                console.error('Failed to decode frame:', err)
+              })
+          }
+        }
+      }
     },
-    []
+    [width, height]
   )
 
   const projectDuration = Math.max(
