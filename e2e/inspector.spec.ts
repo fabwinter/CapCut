@@ -44,6 +44,29 @@ test('toggling mute updates the clip and undo reverts it', async ({ page }) => {
   await expect(muteSwitch).not.toHaveAttribute('data-checked', '')
 })
 
+test('applying a built-in LUT renders without console errors, undo clears it', async ({ page }) => {
+  const consoleErrors: string[] = []
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text())
+  })
+  page.on('pageerror', (err) => consoleErrors.push(String(err)))
+
+  await createProjectWithClipOnTimeline(page, 'Inspector LUT Test')
+  await page.locator('[data-clip]').first().click()
+
+  await expect(page.locator('[data-inspector]')).toContainText('LUT')
+  await expect(page.locator('[data-field="lut-intensity"]')).not.toBeVisible()
+  await page.locator('[data-field="lut-warm"]').click()
+  await expect(page.locator('[data-field="lut-intensity"]')).toBeVisible()
+
+  // Give the LUT bitmap fetch + a repaint a beat to happen before checking for errors.
+  await page.waitForTimeout(300)
+  expect(consoleErrors).toEqual([])
+
+  await page.getByRole('button', { name: 'Undo' }).click()
+  await expect(page.locator('[data-field="lut-intensity"]')).not.toBeVisible()
+})
+
 test('setting a transition between two adjacent clips shows the duration control', async ({ page }) => {
   await createProjectWithClipOnTimeline(page, 'Inspector Transition Test')
   await page.locator('[data-clip]').first().click()

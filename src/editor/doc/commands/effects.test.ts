@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyProjectDoc } from '../schema'
 import { addClip, createClip } from './clips'
 import { CommandBus } from './bus'
-import { removeEffect, setAdjustment } from './effects'
+import { removeEffect, setAdjustment, setLut } from './effects'
 
 function busWithClip() {
   const doc = createEmptyProjectDoc('P')
@@ -50,6 +50,45 @@ describe('setAdjustment', () => {
     bus.dispatch(setAdjustment(clipId, 'brightness', 0.2, 0))
     bus.dispatch(setAdjustment(clipId, 'temperature', -0.3, 0))
     expect(bus.getDoc().tracks[0].clips[0].effects).toHaveLength(2)
+  })
+})
+
+describe('setLut', () => {
+  it('adds a lut effect with the given id and intensity', () => {
+    const { bus, clipId } = busWithClip()
+    bus.dispatch(setLut(clipId, 'warm', 0.8))
+    const effects = bus.getDoc().tracks[0].clips[0].effects
+    expect(effects).toHaveLength(1)
+    expect(effects[0]).toMatchObject({ type: 'lut', lutAssetId: 'warm', params: { value: 0.8 } })
+  })
+
+  it('defaults intensity to 1', () => {
+    const { bus, clipId } = busWithClip()
+    bus.dispatch(setLut(clipId, 'cool'))
+    expect(bus.getDoc().tracks[0].clips[0].effects[0].params.value).toBe(1)
+  })
+
+  it('updates the existing lut effect instead of duplicating', () => {
+    const { bus, clipId } = busWithClip()
+    bus.dispatch(setLut(clipId, 'warm', 1))
+    bus.dispatch(setLut(clipId, 'noir', 0.5))
+    const effects = bus.getDoc().tracks[0].clips[0].effects
+    expect(effects).toHaveLength(1)
+    expect(effects[0]).toMatchObject({ lutAssetId: 'noir', params: { value: 0.5 } })
+  })
+
+  it('clears the lut effect when set to null', () => {
+    const { bus, clipId } = busWithClip()
+    bus.dispatch(setLut(clipId, 'warm'))
+    bus.dispatch(setLut(clipId, null))
+    expect(bus.getDoc().tracks[0].clips[0].effects).toHaveLength(0)
+  })
+
+  it('is a no-op clearing when no lut effect exists', () => {
+    const { bus, clipId } = busWithClip()
+    const docBefore = bus.getDoc()
+    bus.dispatch(setLut(clipId, null))
+    expect(bus.getDoc()).toBe(docBefore)
   })
 })
 

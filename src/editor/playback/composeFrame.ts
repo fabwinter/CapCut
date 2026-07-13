@@ -1,15 +1,28 @@
 import { findActiveClips } from '#/editor/doc/selectors/activeClips'
 import { evaluateKeyframedValue } from '#/editor/doc/selectors/keyframes'
 import { findAdjacentNextClip } from '#/editor/doc/selectors/transitions'
-import type { Clip, ProjectDoc, Transform } from '#/editor/doc/schema'
+import type { Clip, Effect, ProjectDoc, Transform } from '#/editor/doc/schema'
 import type { Micros } from '#/editor/doc/time'
-import { computeAdjustments, NEUTRAL_ADJUSTMENTS } from './compositor/adjustments'
+import { computeAdjustments, computeLutSelection, NEUTRAL_ADJUSTMENTS } from './compositor/adjustments'
 import type { Compositor } from './compositor/gl'
+import { loadLutBitmap } from './compositor/lutStore'
 import { computeTextAnimationModifier } from './compositor/textAnimation'
 import { rasterizeText } from './compositor/textRasterizer'
 import { computeQuadCorners, type Quad } from './compositor/transform2d'
 import { computeTransitionBlend } from './compositor/transitionBlend'
 import type { FrameSourceManager } from './frameSource'
+
+/** Best-effort LUT bitmap fetch — a missing/failed LUT just renders without it rather than breaking the frame. */
+async function resolveLut(effects: Effect[]) {
+  const selection = computeLutSelection(effects)
+  if (!selection) return undefined
+  try {
+    const bitmap = await loadLutBitmap(selection.lutId)
+    return { id: selection.lutId, bitmap, intensity: selection.intensity }
+  } catch {
+    return undefined
+  }
+}
 
 function hexToRgb01(hex: string): [number, number, number] {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
@@ -86,6 +99,7 @@ export async function composeFrame(
     quad: Quad
     opacity: number
     adjustments: ReturnType<typeof computeAdjustments>
+    lut?: Awaited<ReturnType<typeof resolveLut>>
     scissor?: { x: number; y: number; width: number; height: number }
   }[] = []
 
@@ -105,6 +119,8 @@ export async function composeFrame(
       const override = resources.transformOverrides?.get(clip.id)
       const transform = override ? { ...keyframedTransform, ...override } : keyframedTransform
       const adjustments = computeAdjustments(clip.effects)
+      const lut = await resolveLut(clip.effects)
+      if (stale()) return
 
       if (clip.text) {
         const raster = rasterizeText(clip.text, doc.settings.width, doc.settings.height)
@@ -122,13 +138,13 @@ export async function composeFrame(
           doc.settings.width,
           doc.settings.height,
         )
-        draws.push({ slotKey: clip.id, source: raster, quad, opacity: transform.opacity * mod.opacityMul, adjustments })
+        draws.push({ slotKey: clip.id, source: raster, quad, opacity: transform.opacity * mod.opacityMul, adjustments, lut })
       } else {
         const resolved = await resolveClipSource(doc, clip, localMicros, framesToClose, resources)
         if (stale()) return
         if (resolved) {
           const quad = computeQuadCorners(transform, resolved.width, resolved.height, doc.settings.width, doc.settings.height)
-          draws.push({ slotKey: clip.id, source: resolved.source, quad, opacity: transform.opacity, adjustments })
+          draws.push({ slotKey: clip.id, source: resolved.source, quad, opacity: transform.opacity, adjustments, lut })
         }
       }
 
@@ -173,12 +189,15 @@ export async function composeFrame(
                 doc.settings.width,
                 doc.settings.height,
               ).map((p) => ({ x: p.x + blend.xOffsetB, y: p.y })) as Quad
+              const nextLut = await resolveLut(next.effects)
+              if (stale()) return
               draws.push({
                 slotKey: `${next.id}:transition-in`,
                 source: nextResolved.source,
                 quad: nextQuad,
                 opacity: next.transform.opacity * blend.opacityB,
                 adjustments: computeAdjustments(next.effects),
+                lut: nextLut,
                 scissor: blend.scissorB,
               })
             }
@@ -198,7 +217,7 @@ export async function composeFrame(
   compositor.clear(r, g, b, 1)
   for (const draw of draws) {
     if (draw.scissor) compositor.setScissor(draw.scissor.x, draw.scissor.y, draw.scissor.width, draw.scissor.height)
-    compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity, draw.adjustments)
+    compositor.drawLayer(draw.slotKey, draw.source, draw.quad, draw.opacity, draw.adjustments, draw.lut)
     if (draw.scissor) compositor.clearScissor()
   }
   for (const frame of framesToClose) frame.close()
