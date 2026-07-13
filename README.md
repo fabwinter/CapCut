@@ -7,8 +7,9 @@ Stack and UI conventions are inherited from the sister project [CharlieCut](http
 ## Documentation
 
 - [Architecture plan](docs/ARCHITECTURE.md) — scope, iPad/Safari constraints, tech stack, system design, module boundaries, risks
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — phased build plan with acceptance criteria, written for execution by multiple agents
+- [Implementation plan](docs/IMPLEMENTATION_PLAN.md) — original phased plan; Phases 0–2 built, 3–7 superseded
+- [**V2 design & editing plan**](docs/V2_DESIGN_AND_EDITING_PLAN.md) — current plan: iPhone/iPad-first design system + editing milestones M1–M6. **Implementing agents start here.**
 
 ## Status
 
-Planning complete; implementation not yet started. Begin at [Phase 0](docs/IMPLEMENTATION_PLAN.md#phase-0--scaffold--deploy-pipeline).
+Phases 0–2 complete (scaffold + Vercel deploy, project management with undo/redo and autosave, media engine with WebCodecs proxy/thumbnail/waveform generation). Next: [M1 — Timeline](docs/V2_DESIGN_AND_EDITING_PLAN.md#m1--timeline-replaces-old-phase-3-the-biggest-milestone).
