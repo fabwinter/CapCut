@@ -227,7 +227,7 @@ function Editor() {
       {isMobile && (
         <Drawer direction="left" open={mediaOpen} onOpenChange={setMediaOpen}>
           <DrawerContent className="h-full">
-            <MediaLibrary projectId={projectId} />
+            <MediaLibrary projectId={projectId} onClipAdded={() => setMediaOpen(false)} />
           </DrawerContent>
         </Drawer>
       )}

@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { formatDistanceToNow } from 'date-fns'
 import { DownloadIcon, FilmIcon, LoaderCircleIcon, MoreVerticalIcon, PlusIcon, UploadIcon } from 'lucide-react'
 import { useRef, useState } from 'react'
+import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,13 +64,19 @@ function Gallery() {
   const restoreInputRef = useRef<HTMLInputElement>(null)
 
   async function handleBackup(project: ProjectDoc) {
-    const blob = await exportProjectBackup(project.id, project)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${project.name}.ccproj`
-    a.click()
-    URL.revokeObjectURL(url)
+    try {
+      const blob = await exportProjectBackup(project.id, project)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${project.name}.ccproj`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Backup downloaded')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      toast.error(`Backup failed: ${message}`)
+    }
   }
 
   async function handleRestoreFile(file: File) {
@@ -78,9 +85,12 @@ function Gallery() {
     try {
       const doc = await restoreProjectBackup(file)
       await refresh()
+      toast.success('Project restored')
       navigate({ to: '/edit/$projectId', params: { projectId: doc.id } })
     } catch (err) {
-      setRestoreError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setRestoreError(message)
+      toast.error(`Restore failed: ${message}`)
     } finally {
       setRestoring(false)
     }
