@@ -144,6 +144,56 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
     expect(decodeCallLog.length).toBeGreaterThan(secondCallLength)
   })
 
+  it('decodes a multi-sample batch when the decoder needs pipeline depth > 1 before emitting any output', async () => {
+    // Models exactly what WebCodecs' own docs warn about ("you do need to
+    // feed a few chunks to get it started... processing is non-linear, and
+    // you get frames when you get them") and what a hardware-backed decoder
+    // commonly does in practice: it withholds output for decode() call N
+    // until at least one *later* call has also been submitted. A decode-
+    // then-await-in-lockstep loop can never satisfy that — it always has
+    // exactly one call in flight — and would hang forever on the very first
+    // sample even though the decoder is working correctly.
+    const PIPELINE_DEPTH = 2
+    class PipelinedDecoder {
+      private outputCb: (frame: ReturnType<typeof fakeFrame>) => void
+      private submitted: number[] = []
+      private emitted = 0
+      constructor(init: { output: (frame: ReturnType<typeof fakeFrame>) => void }) {
+        this.outputCb = init.output
+      }
+      configure(): void {}
+      decode(chunk: { timestamp: number }): void {
+        decodeCallLog.push(chunk.timestamp)
+        this.submitted.push(chunk.timestamp)
+        // Every time a new sample arrives, emit output for anything that's
+        // now far enough behind the submission front.
+        while (this.submitted.length - this.emitted > PIPELINE_DEPTH - 1) {
+          this.emitted++
+          setTimeout(() => this.outputCb(fakeFrame()), 1)
+        }
+      }
+      async flush(): Promise<void> {
+        while (this.emitted < this.submitted.length) {
+          this.emitted++
+          this.outputCb(fakeFrame())
+        }
+      }
+      close(): void {
+        closedDecoders++
+      }
+    }
+    vi.stubGlobal('VideoDecoder', PipelinedDecoder)
+
+    const manager = new FrameSourceManager()
+    const file = new File([], 'proxy.mp4')
+
+    // Single-frame request (targetIndex 0): with pipeline depth 2, this
+    // sample's own output only arrives once flush() drains the pipeline —
+    // exactly the scenario a lockstep decode-await loop deadlocks on.
+    const frame = await manager.getFrame('asset-1', file, 0)
+    expect(frame).toBeDefined()
+  })
+
   it('recovers via a software-decode retry when the decoder only fails in its default (hardware) mode', async () => {
     // Models exactly the real-world case this fallback targets: a
     // constrained device denies a hardware decode session (total silence,
@@ -151,6 +201,8 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
     class HardwareOnlyFailsDecoder {
       private outputCb: (frame: ReturnType<typeof fakeFrame>) => void
       private hardwareAcceleration: string
+      private pending = 0
+      private drainResolvers: (() => void)[] = []
       constructor(init: { output: (frame: ReturnType<typeof fakeFrame>) => void }) {
         this.outputCb = init.output
         this.hardwareAcceleration = 'no-preference'
@@ -160,10 +212,25 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
       }
       decode(chunk: { timestamp: number }): void {
         decodeCallLog.push(chunk.timestamp)
-        if (this.hardwareAcceleration !== 'prefer-software') return // hang: no callback ever fires
-        setTimeout(() => this.outputCb(fakeFrame()), 5)
+        this.pending++
+        // In hardware mode this never resolves — a denied hardware session
+        // doesn't just delay output, it never starts processing at all, so
+        // flush() (below) correctly hangs too, exactly like the real thing.
+        if (this.hardwareAcceleration !== 'prefer-software') return
+        setTimeout(() => {
+          this.outputCb(fakeFrame())
+          this.pending--
+          if (this.pending === 0) {
+            const resolvers = this.drainResolvers
+            this.drainResolvers = []
+            for (const resolve of resolvers) resolve()
+          }
+        }, 5)
       }
-      async flush(): Promise<void> {}
+      flush(): Promise<void> {
+        if (this.pending === 0) return Promise.resolve()
+        return new Promise((resolve) => this.drainResolvers.push(resolve))
+      }
       close(): void {
         closedDecoders++
       }
@@ -195,7 +262,11 @@ describe('AssetDecoderSession (via FrameSourceManager) concurrency', () => {
       decode(chunk: { timestamp: number }): void {
         decodeCallLog.push(chunk.timestamp)
       }
-      async flush(): Promise<void> {}
+      // A decoder this stuck never resolves flush() either — nothing it was
+      // ever given actually got processed, so there's nothing to drain.
+      flush(): Promise<void> {
+        return new Promise(() => {})
+      }
       close(): void {
         closedDecoders++
       }
