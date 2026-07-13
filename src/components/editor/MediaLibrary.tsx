@@ -1,4 +1,4 @@
-import { AlertCircleIcon, FilmIcon, ImageIcon, LoaderCircleIcon, Music2Icon, UploadIcon } from 'lucide-react'
+import { AlertCircleIcon, FilmIcon, ImageIcon, LoaderCircleIcon, Music2Icon, UploadIcon, PlusIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
@@ -7,12 +7,14 @@ import { microsToSeconds } from '#/editor/doc/time'
 import { importMediaFile } from '#/editor/media/import'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { readThumbnail } from '#/editor/media/assetStorage'
+import { addClipFromAsset } from '#/editor/doc/commands/clips'
 
 interface MediaLibraryProps {
   projectId: string
+  onAddClip?: () => void
 }
 
-export function MediaLibrary({ projectId }: MediaLibraryProps) {
+export function MediaLibrary({ projectId, onAddClip }: MediaLibraryProps) {
   const doc = useEditorStore((s) => s.doc)
   const dispatch = useEditorStore((s) => s.dispatch)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -64,7 +66,7 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
         ) : (
           <ul className="flex flex-col gap-1">
             {assets.map((asset) => (
-              <AssetRow key={asset.id} projectId={projectId} asset={asset} />
+              <AssetRow key={asset.id} projectId={projectId} asset={asset} onAddClip={onAddClip} />
             ))}
           </ul>
         )}
@@ -73,15 +75,54 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
   )
 }
 
-function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) {
+function AssetRow({
+  projectId,
+  asset,
+  onAddClip,
+}: {
+  projectId: string
+  asset: AssetRef
+  onAddClip?: () => void
+}) {
+  const doc = useEditorStore((s) => s.doc)
+  const dispatch = useEditorStore((s) => s.dispatch)
   const KindIcon = asset.kind === 'video' ? FilmIcon : asset.kind === 'audio' ? Music2Icon : ImageIcon
   const thumbnailUrl = useAssetThumbnail(projectId, asset)
+  const isReady = asset.status === 'ready'
+
+  const handleAddToTimeline = () => {
+    if (!isReady || !doc) return
+
+    // Find or create the appropriate track
+    const trackKind = asset.kind === 'audio' ? 'audio' : 'video'
+    let track = doc.tracks.find((t) => t.kind === trackKind)
+
+    if (!track) {
+      // Track doesn't exist, find a video track to add to
+      track = doc.tracks.find((t) => t.kind === 'video')
+    }
+
+    if (!track) return
+
+    // Get project duration to place clip at the end
+    let projectEnd = 0
+    for (const t of doc.tracks) {
+      for (const clip of t.clips) {
+        projectEnd = Math.max(projectEnd, clip.startMicros + clip.durationMicros)
+      }
+    }
+
+    // Add clip to track
+    const duration = asset.durationMicros || 1_000_000
+    dispatch(addClipFromAsset(track.id, asset.id, duration, doc.settings.fps))
+    onAddClip?.()
+  }
 
   return (
     <li
       data-asset-row
       data-asset-status={asset.status}
-      className="hover:bg-muted flex min-h-11 items-center gap-2 rounded-md p-1.5"
+      className="hover:bg-muted flex min-h-11 items-center gap-2 rounded-md p-1.5 group"
     >
       <div className="bg-muted flex size-10 shrink-0 items-center justify-center overflow-hidden rounded">
         {thumbnailUrl ? (
@@ -96,7 +137,18 @@ function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) 
           {asset.durationMicros ? `${microsToSeconds(asset.durationMicros).toFixed(1)}s` : asset.kind}
         </p>
       </div>
-      <StatusIndicator asset={asset} />
+      {isReady && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleAddToTimeline}
+          aria-label="Add to timeline"
+          className="opacity-0 group-hover:opacity-100 transition"
+        >
+          <PlusIcon className="size-4" />
+        </Button>
+      )}
+      {!isReady && <StatusIndicator asset={asset} />}
     </li>
   )
 }

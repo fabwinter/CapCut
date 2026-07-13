@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon } from 'lucide-react'
+import { CheckIcon, ChevronLeftIcon, LoaderCircleIcon, RedoIcon, UndoIcon, FilmIcon, LayoutIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -22,6 +22,7 @@ function Editor() {
     useEditorStore()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [mobilePanel, setMobilePanel] = useState<'media' | 'timeline'>('timeline')
 
   useEffect(() => {
     let cancelled = false
@@ -103,8 +104,9 @@ function Editor() {
       </header>
 
       <main className="flex min-h-0 flex-1">
-        <aside className="border-border w-64 shrink-0 border-r">
-          <MediaLibrary projectId={projectId} />
+        {/* Desktop: Split view */}
+        <aside className="border-border w-64 shrink-0 border-r max-md:hidden">
+          <MediaLibrary projectId={projectId} onAddClip={() => setMobilePanel('timeline')} />
         </aside>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -113,12 +115,50 @@ function Editor() {
           </div>
 
           <div className="flex flex-col min-h-0">
-            <Timeline
-              doc={doc}
-              selectedClipId={selectedClipId}
-              onSelectClip={setSelectedClipId}
-            />
-            <EditorToolbar doc={doc} selectedClipId={selectedClipId} />
+            {/* Mobile: Tab switcher */}
+            <div className="md:hidden border-t border-border/50 flex gap-0 bg-card/40">
+              <button
+                onClick={() => setMobilePanel('media')}
+                className={`flex-1 py-2 text-xs font-medium flex items-center justify-center gap-1 border-b-2 transition ${
+                  mobilePanel === 'media'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground'
+                }`}
+              >
+                <FilmIcon className="size-4" />
+                Media
+              </button>
+              <button
+                onClick={() => setMobilePanel('timeline')}
+                className={`flex-1 py-2 text-xs font-medium flex items-center justify-center gap-1 border-b-2 transition ${
+                  mobilePanel === 'timeline'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted-foreground'
+                }`}
+              >
+                <LayoutIcon className="size-4" />
+                Timeline
+              </button>
+            </div>
+
+            {/* Mobile: Media panel */}
+            {mobilePanel === 'media' && (
+              <div className="md:hidden flex-1 overflow-auto">
+                <MediaLibrary projectId={projectId} onAddClip={() => setMobilePanel('timeline')} />
+              </div>
+            )}
+
+            {/* Desktop & Mobile: Timeline */}
+            {mobilePanel === 'timeline' && (
+              <>
+                <Timeline
+                  doc={doc}
+                  selectedClipId={selectedClipId}
+                  onSelectClip={setSelectedClipId}
+                />
+                <EditorToolbar doc={doc} selectedClipId={selectedClipId} />
+              </>
+            )}
           </div>
         </div>
       </main>
