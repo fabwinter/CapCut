@@ -83,3 +83,55 @@ describe('composeFrame draw-loop error reporting', () => {
     expect(frameHadError).toBe(false)
   })
 })
+
+describe('composeFrame transitions', () => {
+  it('advances the incoming clip forward through its own footage during a transition, instead of freezing on its first frame', async () => {
+    const doc = createEmptyProjectDoc('P')
+    const videoAsset = (id: string): AssetRef => ({
+      id,
+      kind: 'video',
+      opfsPath: `assets/${id}/original`,
+      originalName: `${id}.mp4`,
+      status: 'ready',
+      width: 100,
+      height: 100,
+      proxy: { opfsPath: `assets/${id}/proxy.mp4`, width: 100, height: 100 },
+      createdAt: Date.now(),
+    })
+    doc.assets.push(videoAsset('a'), videoAsset('b'))
+
+    const clipA = createClip({ trackId: doc.tracks[0].id, assetId: 'a', startMicros: 0, durationMicros: 1_000_000 })
+    clipA.transitionOut = { type: 'crossDissolve', durationMicros: 400_000 }
+    const clipB = createClip({
+      trackId: doc.tracks[0].id,
+      assetId: 'b',
+      startMicros: 1_000_000,
+      durationMicros: 1_000_000,
+      inPointMicros: 2_000_000,
+    })
+    doc.tracks[0].clips.push(clipA, clipB)
+
+    const requestedLocalMicros: { assetId: string; localMicros: number }[] = []
+    const fakeFrame = { codedWidth: 100, codedHeight: 100, close: () => {} }
+    const compositor = stubCompositor()
+
+    await composeFrame(compositor, doc, 700_000, {
+      getProxyFile: () => Promise.resolve({} as unknown as File),
+      getImageBitmap: () => Promise.reject(new Error('not used')),
+      frameSources: {
+        getFrame: (assetId: string, _file: File, localMicros: number) => {
+          requestedLocalMicros.push({ assetId, localMicros })
+          return Promise.resolve(fakeFrame as unknown as VideoFrame)
+        },
+        getLastFailureMessage: () => undefined,
+      } as unknown as FrameSourceManager,
+    })
+
+    const bCall = requestedLocalMicros.find((r) => r.assetId === 'b')
+    // 700_000 is 100_000µs into the 400_000µs transition (which starts at
+    // 600_000 — clipA's end minus the transition duration); clip B should be
+    // sampled 100_000µs into its own footage from its in-point, not frozen
+    // at inPointMicros itself.
+    expect(bCall?.localMicros).toBe(2_000_000 + 100_000)
+  })
+})

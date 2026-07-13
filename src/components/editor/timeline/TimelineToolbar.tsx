@@ -25,6 +25,7 @@ interface TimelineToolbarProps {
   onDuplicate: () => void
   onDelete: (ripple: boolean) => void
   onAddTrack: (kind: TrackKind) => void
+  onAddText: () => void
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomToFit: () => void
@@ -37,7 +38,6 @@ interface TimelineToolbarProps {
 const TRACK_KINDS: { kind: TrackKind; icon: typeof FilmIcon; label: string }[] = [
   { kind: 'video', icon: FilmIcon, label: 'Add video track' },
   { kind: 'overlay', icon: LayersIcon, label: 'Add overlay track' },
-  { kind: 'text', icon: TypeIcon, label: 'Add text track' },
   { kind: 'audio', icon: Music2Icon, label: 'Add audio track' },
 ]
 
@@ -48,6 +48,7 @@ export function TimelineToolbar({
   onDuplicate,
   onDelete,
   onAddTrack,
+  onAddText,
   onZoomIn,
   onZoomOut,
   onZoomToFit,
@@ -108,6 +109,9 @@ export function TimelineToolbar({
               <Icon className="size-3.5" />
             </Button>
           ))}
+          <Button variant="ghost" size="icon-sm" aria-label="Add text" data-action="add-text" onClick={onAddText}>
+            <TypeIcon className="size-3.5" />
+          </Button>
         </div>
       )}
 

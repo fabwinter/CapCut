@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { deleteClip, duplicateClip, moveClip, splitClip, trimClipEnd, trimClipStart } from '#/editor/doc/commands/clips'
+import { addClip, createClip, deleteClip, duplicateClip, moveClip, splitClip, trimClipEnd, trimClipStart } from '#/editor/doc/commands/clips'
 import { addTrack, setTrackLocked, setTrackMuted } from '#/editor/doc/commands/tracks'
-import { projectDurationMicros, type ProjectDoc, type TrackKind } from '#/editor/doc/schema'
+import { setTransitionOut } from '#/editor/doc/commands/transitions'
+import { createDefaultTextPayload, projectDurationMicros, type ProjectDoc, type TrackKind } from '#/editor/doc/schema'
 import {
   clampZoom,
   computeTimelineLayout,
@@ -10,13 +11,15 @@ import {
   timeToPx,
   visibleClipIds,
 } from '#/editor/doc/selectors/layout'
-import { frameDurationMicros, type Micros } from '#/editor/doc/time'
+import { findAdjacentNextClip } from '#/editor/doc/selectors/transitions'
+import { frameDurationMicros, secondsToMicros, type Micros } from '#/editor/doc/time'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { usePanZoom } from './panZoom'
 import { RULER_HEIGHT_PX, TimelineRuler } from './TimelineRuler'
 import { TimelineClip } from './TimelineClip'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TRACK_HEADER_WIDTH_PX, TrackHeaderRow } from './TrackHeaderRow'
+import { TransitionMarker } from './TransitionMarker'
 
 const ZOOM_STEP_FACTOR = 1.4
 
@@ -115,6 +118,28 @@ export function Timeline({ projectId, doc }: TimelineProps) {
     setPlayhead(projectDurationMicros(doc))
   }
 
+  function addTextClip() {
+    let track = doc.tracks.find((t) => t.kind === 'text' && !t.locked)
+    if (!track) {
+      dispatch(addTrack('text'))
+      track = useEditorStore
+        .getState()
+        .doc?.tracks.filter((t) => t.kind === 'text')
+        .at(-1)
+      if (!track) return
+    }
+    const startMicros = track.clips.reduce((max, c) => Math.max(max, c.startMicros + c.durationMicros), 0)
+    const durationMicros = secondsToMicros(3)
+    const clip = createClip({
+      trackId: track.id,
+      startMicros,
+      durationMicros,
+      text: createDefaultTextPayload('Text'),
+    })
+    dispatch(addClip(clip))
+    selectClip(clip.id)
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <TimelineToolbar
@@ -128,6 +153,7 @@ export function Timeline({ projectId, doc }: TimelineProps) {
           selectClip(null)
         }}
         onAddTrack={(kind: TrackKind) => dispatch(addTrack(kind))}
+        onAddText={addTextClip}
         onZoomIn={() => zoomBy(ZOOM_STEP_FACTOR)}
         onZoomOut={() => zoomBy(1 / ZOOM_STEP_FACTOR)}
         onZoomToFit={zoomToFit}
@@ -237,6 +263,31 @@ export function Timeline({ projectId, doc }: TimelineProps) {
                         }
                         onTrimStartCommit={(clipId, startMicros) => dispatch(trimClipStart(clipId, startMicros))}
                         onTrimEndCommit={(clipId, endMicros) => dispatch(trimClipEnd(clipId, endMicros))}
+                      />
+                    )
+                  }),
+              )}
+
+              {doc.tracks.map((track, trackIndex) =>
+                track.clips
+                  .filter((clip) => clip.transitionOut && visibleIds.has(clip.id))
+                  .map((clip) => {
+                    const next = findAdjacentNextClip(doc, clip)
+                    if (!next) return null
+                    return (
+                      <TransitionMarker
+                        key={`transition-${clip.id}`}
+                        clipId={clip.id}
+                        transition={clip.transitionOut!}
+                        boundaryMicros={clip.startMicros + clip.durationMicros}
+                        maxDurationMicros={Math.min(clip.durationMicros, next.durationMicros)}
+                        y={layout.tracks[trackIndex].y}
+                        height={layout.tracks[trackIndex].height}
+                        pxPerSecond={pxPerSecond}
+                        onSelect={selectClip}
+                        onDurationCommit={(clipId, durationMicros) =>
+                          dispatch(setTransitionOut(clipId, { type: clip.transitionOut!.type, durationMicros }))
+                        }
                       />
                     )
                   }),

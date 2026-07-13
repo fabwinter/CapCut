@@ -79,6 +79,28 @@ test('setting a transition between two adjacent clips shows the duration control
   await expect(page.locator('[data-field="transition-none"]')).toBeVisible()
 })
 
+test('a transition between two adjacent clips shows a draggable marker in the timeline, and dragging it resizes the duration', async ({ page }) => {
+  await createProjectWithClipOnTimeline(page, 'Inspector Transition Marker Test')
+  await page.locator('[data-clip]').first().click()
+  await page.locator('[data-action="duplicate"]').click()
+  await page.locator('[data-clip]').first().click()
+  await page.locator('[data-field="transition-crossDissolve"]').click()
+
+  const marker = page.locator('[data-transition-marker]')
+  await expect(marker).toBeVisible()
+  const before = await page.locator('[data-field="transition-duration"]').innerText()
+
+  const handle = page.locator('[data-transition-resize-handle]')
+  const handleBox = await handle.boundingBox()
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handleBox!.x - 30, handleBox!.y + handleBox!.height / 2, { steps: 5 })
+  await page.mouse.up()
+
+  const after = await page.locator('[data-field="transition-duration"]').innerText()
+  expect(after).not.toBe(before)
+})
+
 test('a lone clip with no adjacent neighbor explains why transitions are unavailable, instead of hiding the section', async ({ page }) => {
   await createProjectWithClipOnTimeline(page, 'Inspector No Transition Test')
   await page.locator('[data-clip]').first().click()

@@ -1,15 +1,18 @@
 import { RotateCwIcon, XIcon } from 'lucide-react'
 import { useMemo } from 'react'
 import { Button } from '#/components/ui/button'
+import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
 import { Slider } from '#/components/ui/slider'
 import { Switch } from '#/components/ui/switch'
+import { Textarea } from '#/components/ui/textarea'
 import { setClipFades, setClipMuted, setClipSpeed, setClipVolume } from '#/editor/doc/commands/clipProperties'
 import { addKeyframe, deleteKeyframe } from '#/editor/doc/commands/keyframes'
 import { setAdjustment, setLut } from '#/editor/doc/commands/effects'
+import { setClipText } from '#/editor/doc/commands/text'
 import { setTransitionOut } from '#/editor/doc/commands/transitions'
 import { setClipTransform } from '#/editor/doc/commands/transform'
 import { BUILTIN_LUTS } from '#/editor/playback/compositor/lutStore'
-import type { Clip, EffectType, KeyframableProperty, ProjectDoc, TransitionType } from '#/editor/doc/schema'
+import type { Clip, EffectType, KeyframableProperty, ProjectDoc, TextAlign, TextAnimation, TransitionType } from '#/editor/doc/schema'
 import { findAdjacentNextClip } from '#/editor/doc/selectors/transitions'
 import { microsToSeconds, secondsToMicros } from '#/editor/doc/time'
 import { useEditorStore } from '#/editor/state/editorStore'
@@ -21,6 +24,9 @@ const TRANSITION_LABELS: Record<TransitionType, string> = {
   slide: 'Slide',
 }
 const TRANSITION_TYPES = Object.keys(TRANSITION_LABELS) as TransitionType[]
+
+const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right']
+const TEXT_ANIMATIONS: TextAnimation[] = ['none', 'fadeIn', 'slideIn', 'popIn']
 
 const ADJUSTMENTS: { type: EffectType; label: string; min: number; max: number; neutral: number; step: number }[] = [
   { type: 'brightness', label: 'Brightness', min: -1, max: 1, neutral: 0, step: 0.02 },
@@ -62,69 +68,148 @@ export function Inspector() {
 
   return (
     <aside data-inspector className="border-border bg-card/40 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3">
-      <Section title="Speed">
-        <SliderRow
-          data-field="speed"
-          label={`${clip.speed.toFixed(1)}x`}
-          value={clip.speed}
-          min={0.1}
-          max={4}
-          step={0.1}
-          onCommit={(v) => dispatch(setClipSpeed(clip.id, v))}
-        />
-      </Section>
-
-      <Section title="Volume">
-        <SliderRow
-          data-field="volume"
-          label={`${Math.round(clip.volume * 100)}%`}
-          value={clip.volume}
-          min={0}
-          max={2}
-          step={0.05}
-          onCommit={(v) => dispatch(setClipVolume(clip.id, v))}
-        />
-        <label className="flex items-center justify-between pt-1 text-xs">
-          <span className="text-muted-foreground">Mute</span>
-          <Switch
-            data-field="mute"
-            checked={clip.muted}
-            onCheckedChange={(checked) => dispatch(setClipMuted(clip.id, checked))}
+      {clip.text && (
+        <Section title="Text">
+          <Textarea
+            data-field="text-content"
+            value={clip.text.content}
+            placeholder="Enter text"
+            onChange={(e) => dispatch(setClipText(clip.id, { content: e.target.value }))}
           />
-        </label>
-        <Button
-          size="xs"
-          variant="outline"
-          className="mt-1"
-          data-field="add-keyframe-volume"
-          onClick={() => dispatch(addKeyframe(clip.id, 'volume', clipLocalPlayhead, clip.volume))}
-        >
-          ◇ Add volume keyframe at playhead
-        </Button>
-      </Section>
+          <SliderRow
+            data-field="text-font-size"
+            label={`${Math.round(clip.text.fontSize)}px`}
+            value={clip.text.fontSize}
+            min={12}
+            max={200}
+            step={1}
+            onCommit={(v) => dispatch(setClipText(clip.id, { fontSize: v }))}
+          />
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Color</span>
+            <input
+              type="color"
+              data-field="text-color"
+              value={clip.text.color}
+              onChange={(e) => dispatch(setClipText(clip.id, { color: e.target.value }))}
+              className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent"
+            />
+          </label>
+          <div className="flex gap-1">
+            {TEXT_ALIGNS.map((align) => (
+              <Button
+                key={align}
+                size="xs"
+                variant={clip.text!.align === align ? 'default' : 'outline'}
+                data-field={`text-align-${align}`}
+                onClick={() => dispatch(setClipText(clip.id, { align }))}
+              >
+                {align[0].toUpperCase() + align.slice(1)}
+              </Button>
+            ))}
+          </div>
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Animate in</span>
+            <NativeSelect
+              data-field="text-animation-in"
+              size="sm"
+              value={clip.text.animationIn}
+              onChange={(e) => dispatch(setClipText(clip.id, { animationIn: e.target.value as TextAnimation }))}
+            >
+              {TEXT_ANIMATIONS.map((a) => (
+                <NativeSelectOption key={a} value={a}>
+                  {a}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Animate out</span>
+            <NativeSelect
+              data-field="text-animation-out"
+              size="sm"
+              value={clip.text.animationOut}
+              onChange={(e) => dispatch(setClipText(clip.id, { animationOut: e.target.value as TextAnimation }))}
+            >
+              {TEXT_ANIMATIONS.map((a) => (
+                <NativeSelectOption key={a} value={a}>
+                  {a}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+        </Section>
+      )}
 
-      <Section title="Fade">
-        <SliderRow
-          data-field="fade-in"
-          label={`In ${microsToSeconds(clip.fadeInMicros).toFixed(1)}s`}
-          value={clip.fadeInMicros}
-          min={0}
-          max={clip.durationMicros}
-          step={100_000}
-          onCommit={(v) => dispatch(setClipFades(clip.id, { fadeInMicros: v }))}
-        />
-        <SliderRow
-          data-field="fade-out"
-          label={`Out ${microsToSeconds(clip.fadeOutMicros).toFixed(1)}s`}
-          value={clip.fadeOutMicros}
-          min={0}
-          max={clip.durationMicros}
-          step={100_000}
-          onCommit={(v) => dispatch(setClipFades(clip.id, { fadeOutMicros: v }))}
-        />
-      </Section>
+      {!clip.text && (
+        <Section title="Speed">
+          <SliderRow
+            data-field="speed"
+            label={`${clip.speed.toFixed(1)}x`}
+            value={clip.speed}
+            min={0.1}
+            max={4}
+            step={0.1}
+            onCommit={(v) => dispatch(setClipSpeed(clip.id, v))}
+          />
+        </Section>
+      )}
 
-      <Section title="Rotate">
+      {!clip.text && (
+        <Section title="Volume">
+          <SliderRow
+            data-field="volume"
+            label={`${Math.round(clip.volume * 100)}%`}
+            value={clip.volume}
+            min={0}
+            max={2}
+            step={0.05}
+            onCommit={(v) => dispatch(setClipVolume(clip.id, v))}
+          />
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Mute</span>
+            <Switch
+              data-field="mute"
+              checked={clip.muted}
+              onCheckedChange={(checked) => dispatch(setClipMuted(clip.id, checked))}
+            />
+          </label>
+          <Button
+            size="xs"
+            variant="outline"
+            className="mt-1"
+            data-field="add-keyframe-volume"
+            onClick={() => dispatch(addKeyframe(clip.id, 'volume', clipLocalPlayhead, clip.volume))}
+          >
+            ◇ Add volume keyframe at playhead
+          </Button>
+        </Section>
+      )}
+
+      {!clip.text && (
+        <Section title="Fade">
+          <SliderRow
+            data-field="fade-in"
+            label={`In ${microsToSeconds(clip.fadeInMicros).toFixed(1)}s`}
+            value={clip.fadeInMicros}
+            min={0}
+            max={clip.durationMicros}
+            step={100_000}
+            onCommit={(v) => dispatch(setClipFades(clip.id, { fadeInMicros: v }))}
+          />
+          <SliderRow
+            data-field="fade-out"
+            label={`Out ${microsToSeconds(clip.fadeOutMicros).toFixed(1)}s`}
+            value={clip.fadeOutMicros}
+            min={0}
+            max={clip.durationMicros}
+            step={100_000}
+            onCommit={(v) => dispatch(setClipFades(clip.id, { fadeOutMicros: v }))}
+          />
+        </Section>
+      )}
+
+      {!clip.text && <Section title="Rotate">
         <div className="flex items-center justify-between gap-2">
           <span data-field="rotation-degrees" className="text-muted-foreground text-[0.6875rem]">
             {(((clip.transform.rotation % 360) + 360) % 360).toFixed(0)}°
@@ -141,7 +226,7 @@ export function Inspector() {
         <p className="text-muted-foreground text-[0.6875rem]">
           If a video plays back rotated incorrectly, use this to correct it manually.
         </p>
-      </Section>
+      </Section>}
 
       <Section title="Opacity">
         <SliderRow
