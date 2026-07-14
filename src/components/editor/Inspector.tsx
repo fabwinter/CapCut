@@ -1,5 +1,5 @@
 import { RotateCwIcon, XIcon } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '#/components/ui/drawer'
 import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
@@ -102,6 +102,25 @@ export function Inspector() {
               className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent"
             />
           </label>
+          <SliderRow
+            data-field="text-stroke-width"
+            label={`Stroke: ${clip.text.strokeWidth ?? 0}px`}
+            value={clip.text.strokeWidth ?? 0}
+            min={0}
+            max={10}
+            step={0.5}
+            onCommit={(v) => dispatch(setClipText(clip.id, { strokeWidth: v }))}
+          />
+          <label className="flex items-center justify-between pt-1 text-xs">
+            <span className="text-muted-foreground">Stroke color</span>
+            <input
+              type="color"
+              data-field="text-stroke-color"
+              value={clip.text.strokeColor ?? '#000000'}
+              onChange={(e) => dispatch(setClipText(clip.id, { strokeColor: e.target.value }))}
+              className="h-6 w-10 cursor-pointer rounded border-0 bg-transparent"
+            />
+          </label>
           <div className="flex gap-1">
             {TEXT_ALIGNS.map((align) => (
               <Button
@@ -147,6 +166,53 @@ export function Inspector() {
           </label>
         </Section>
       )}
+
+      <Section title="Transform">
+        <div className="flex flex-col gap-2">
+          <NumericTransformInput
+            label="X"
+            value={clip.transform.x}
+            onChange={(x) => dispatch(setClipTransform(clip.id, { x }))}
+          />
+          <NumericTransformInput
+            label="Y"
+            value={clip.transform.y}
+            onChange={(y) => dispatch(setClipTransform(clip.id, { y }))}
+          />
+          <NumericTransformInput
+            label="Scale"
+            value={clip.transform.scale}
+            onChange={(scale) => dispatch(setClipTransform(clip.id, { scale }))}
+            min={0.1}
+            max={4}
+            step={0.05}
+          />
+          <NumericTransformInput
+            label="Rotation"
+            value={clip.transform.rotation}
+            onChange={(rotation) => dispatch(setClipTransform(clip.id, { rotation }))}
+            step={1}
+          />
+          <div className="flex gap-1">
+            <Button
+              size="xs"
+              variant="outline"
+              data-field="center-clip"
+              onClick={() => dispatch(setClipTransform(clip.id, { x: 0, y: 0, scale: 1 }))}
+            >
+              Center
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              data-field="reset-transform"
+              onClick={() => dispatch(setClipTransform(clip.id, { x: 0, y: 0, scale: 1, rotation: 0 }))}
+            >
+              Reset
+            </Button>
+          </div>
+        </div>
+      </Section>
 
       {!clip.text && (
         <Section title="Speed">
@@ -441,5 +507,53 @@ function SliderRow({ label, value, min, max, step, onCommit, ...rest }: SliderRo
       />
       <span className="text-muted-foreground w-14 shrink-0 text-right text-[0.6875rem] tabular-nums">{label}</span>
     </div>
+  )
+}
+
+interface NumericTransformInputProps {
+  label: string
+  value: number
+  onChange: (value: number) => void
+  min?: number
+  max?: number
+  step?: number
+}
+
+function NumericTransformInput({ label, value, onChange, min, max, step = 1 }: NumericTransformInputProps) {
+  const [localValue, setLocalValue] = useState(value.toFixed(2))
+
+  useEffect(() => {
+    setLocalValue(value.toFixed(2))
+  }, [value])
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    setLocalValue(e.target.value)
+  }
+
+  function handleBlur() {
+    const parsed = parseFloat(localValue)
+    if (!isNaN(parsed)) {
+      const clamped = min !== undefined && max !== undefined ? Math.max(min, Math.min(max, parsed)) : parsed
+      onChange(clamped)
+      setLocalValue(clamped.toFixed(2))
+    } else {
+      setLocalValue(value.toFixed(2))
+    }
+  }
+
+  return (
+    <label className="flex items-center gap-2 text-xs">
+      <span className="text-muted-foreground w-12 shrink-0">{label}:</span>
+      <input
+        type="number"
+        value={localValue}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        step={step}
+        min={min}
+        max={max}
+        className="h-6 w-16 rounded border border-border/50 bg-muted/30 px-2 py-1 text-xs text-foreground"
+      />
+    </label>
   )
 }

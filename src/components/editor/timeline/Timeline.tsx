@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { UploadIcon } from 'lucide-react'
 import { addClip, createClip, deleteClip, duplicateClip, moveClip, splitClip, trimClipEnd, trimClipStart } from '#/editor/doc/commands/clips'
 import { addTrack, setTrackLocked, setTrackMuted } from '#/editor/doc/commands/tracks'
 import { setTransitionOut } from '#/editor/doc/commands/transitions'
@@ -68,6 +69,8 @@ export function Timeline({ projectId, doc }: TimelineProps) {
     }
     return undefined
   }, [doc, selectedClipId])
+
+  const hasClips = useMemo(() => doc.tracks.some((t) => t.clips.length > 0), [doc.tracks])
 
   function toContentPoint(clientX: number, clientY: number) {
     const rect = contentRef.current?.getBoundingClientRect()
@@ -263,6 +266,13 @@ export function Timeline({ projectId, doc }: TimelineProps) {
                         }
                         onTrimStartCommit={(clipId, startMicros) => dispatch(trimClipStart(clipId, startMicros))}
                         onTrimEndCommit={(clipId, endMicros) => dispatch(trimClipEnd(clipId, endMicros))}
+                        onKeyframeClick={(micros) => setPlayhead(micros)}
+                        onSplit={(micros) => dispatch(splitClip(clip.id, micros))}
+                        onDuplicate={() => dispatch(duplicateClip(clip.id))}
+                        onDelete={(ripple) => {
+                          dispatch(deleteClip(clip.id, { ripple }))
+                          selectClip(null)
+                        }}
                       />
                     )
                   }),
@@ -291,6 +301,14 @@ export function Timeline({ projectId, doc }: TimelineProps) {
                       />
                     )
                   }),
+              )}
+              {!hasClips && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <div className="text-muted-foreground/40 mb-3">
+                    <UploadIcon className="size-12" />
+                  </div>
+                  <p className="text-muted-foreground text-sm">Import media to get started</p>
+                </div>
               )}
             </div>
           </div>

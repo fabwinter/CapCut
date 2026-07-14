@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import * as Comlink from 'comlink'
-import { readOriginal, writeProxy, writeThumbnails } from './assetStorage'
+import { readOriginal, writeProxy, writeThumbnails, writePoster } from './assetStorage'
 import {
   DEFAULT_VIDEO_DERIVATIVES_OPTIONS,
   generateVideoDerivatives,
@@ -27,6 +27,9 @@ const api = {
     const result = await generateVideoDerivatives(file, options)
     await writeProxy(input.projectId, input.assetId, result.proxy.blob)
     await writeThumbnails(input.projectId, input.assetId, result.thumbnails, result.thumbnailIntervalMicros)
+    if (result.thumbnails.length > 0) {
+      await writePoster(input.projectId, result.thumbnails[0])
+    }
     return {
       width: result.proxy.width,
       height: result.proxy.height,

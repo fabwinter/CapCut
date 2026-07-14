@@ -51,6 +51,7 @@ export class Transport {
   private renderGeneration = 0
   /** Live drag/pinch preview for a clip's transform, layered on top of the doc without touching it — see `setTransformOverride`. */
   private readonly transformOverrides = new Map<string, Partial<Transform>>()
+  private isLooping = false
 
   constructor(
     private readonly projectId: string,
@@ -63,6 +64,16 @@ export class Transport {
 
   get isPlaying(): boolean {
     return this.playing
+  }
+
+  setLoop(enabled: boolean): void {
+    this.isLooping = enabled
+  }
+
+  setMasterVolume(volume: number): void {
+    if (this.masterGain) {
+      this.masterGain.gain.value = Math.max(0, Math.min(1, volume))
+    }
   }
 
   private ensureCanvasSize(doc: ProjectDoc): void {
@@ -246,6 +257,10 @@ export class Transport {
     const micros = this.currentMicros()
     const duration = projectDurationMicros(this.getDoc())
     if (micros >= duration) {
+      if (this.isLooping) {
+        void this.play(0)
+        return
+      }
       this.pause()
       this.callbacks.onTick?.(duration)
       this.renderLatest(duration)

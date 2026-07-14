@@ -1,5 +1,5 @@
-import { PauseIcon, PlayIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { PauseIcon, PlayIcon, RotateCcwIcon, Volume2Icon, VolumeXIcon, MaximizeIcon } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { setClipTransform } from '#/editor/doc/commands/transform'
 import type { ProjectDoc, Transform } from '#/editor/doc/schema'
@@ -39,9 +39,13 @@ interface ManipulateGesture {
 
 export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const previewContainerRef = useRef<HTMLDivElement>(null)
   const transportRef = useRef<Transport | null>(null)
   const gestureRef = useRef<ManipulateGesture | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isLooping, setIsLooping] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [selectionQuad, setSelectionQuad] = useState<Quad | undefined>(undefined)
   const [renderError, setRenderError] = useState<string | undefined>(undefined)
 
@@ -97,6 +101,47 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
     if (transport.isPlaying) transport.pause()
     else void transport.play(playheadMicros)
   }
+
+  function toggleLoop() {
+    const newLooping = !isLooping
+    setIsLooping(newLooping)
+    transportRef.current?.setLoop(newLooping)
+  }
+
+  function toggleMute() {
+    const newMuted = !isMuted
+    setIsMuted(newMuted)
+    transportRef.current?.setMasterVolume(newMuted ? 0 : 1)
+  }
+
+  async function toggleFullscreen() {
+    const container = previewContainerRef.current
+    if (!container) return
+    if (!isFullscreen) {
+      try {
+        await container.requestFullscreen?.()
+        setIsFullscreen(true)
+      } catch {
+        // Fullscreen not supported or denied (e.g., iOS Safari) — add CSS theater mode as fallback
+        setIsFullscreen(true)
+      }
+    } else {
+      try {
+        await document.exitFullscreen?.()
+      } catch {
+        // Already exited or not supported
+      }
+      setIsFullscreen(false)
+    }
+  }
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
 
   // Space toggles play/pause — a desktop-bonus shortcut (ARCHITECTURE §1).
   // Reads fresh state via getState() rather than closing over `playheadMicros`
@@ -221,8 +266,24 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
   const duration = microsToSeconds(projectDurationMicros(doc))
   const current = microsToSeconds(playheadMicros)
 
+  const hasClipAtPlayhead = useMemo(() => {
+    for (const track of doc.tracks) {
+      for (const clip of track.clips) {
+        if (playheadMicros >= clip.startMicros && playheadMicros < clip.startMicros + clip.durationMicros) {
+          return true
+        }
+      }
+    }
+    return false
+  }, [doc.tracks, playheadMicros])
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      ref={previewContainerRef}
+      className="flex min-h-0 flex-1 flex-col"
+      data-fullscreen={isFullscreen}
+      style={isFullscreen ? { position: 'fixed', inset: 0, zIndex: 50 } : undefined}
+    >
       {/* container-type:size lets the aspect box below contain-fit with pure CSS
           (cqw/cqh). The old `height:100%` + max-w-full approach silently broke
           the aspect ratio whenever width was the binding constraint. */}
@@ -271,6 +332,13 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
                 {renderError}
               </div>
             )}
+            {!hasClipAtPlayhead && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-white/30 text-xs">
+                  {doc.settings.width}×{doc.settings.height}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -284,9 +352,41 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
         >
           {isPlaying ? <PauseIcon className="size-3.5" /> : <PlayIcon className="size-3.5" />}
         </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Loop playback"
+          data-action="toggle-loop"
+          data-active={isLooping}
+          onClick={toggleLoop}
+          className={isLooping ? 'text-primary' : ''}
+        >
+          <RotateCcwIcon className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={isMuted ? 'Unmute' : 'Mute'}
+          data-action="toggle-mute"
+          data-muted={isMuted}
+          onClick={toggleMute}
+          className={isMuted ? 'text-muted-foreground' : ''}
+        >
+          {isMuted ? <VolumeXIcon className="size-3.5" /> : <Volume2Icon className="size-3.5" />}
+        </Button>
         <span className="text-[0.6875rem] text-white/70 tabular-nums">
           {formatTime(current)} / {formatTime(duration)}
         </span>
+        <div className="ml-auto" />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Fullscreen"
+          data-action="toggle-fullscreen"
+          onClick={toggleFullscreen}
+        >
+          <MaximizeIcon className="size-3.5" />
+        </Button>
       </div>
     </div>
   )

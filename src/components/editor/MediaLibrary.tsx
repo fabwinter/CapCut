@@ -1,5 +1,6 @@
 import { AlertCircleIcon, FilmIcon, ImageIcon, LoaderCircleIcon, Music2Icon, PlusIcon, UploadIcon } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import { addClip, createClip } from '#/editor/doc/commands/clips'
@@ -61,32 +62,71 @@ export function autoDetectProjectSettings(doc: ProjectDoc, assetId: string, disp
 
 interface MediaLibraryProps {
   projectId: string
+  onClipAdded?: () => void
 }
 
-export function MediaLibrary({ projectId }: MediaLibraryProps) {
+function isSupportedMimeType(mimeType: string): boolean {
+  return mimeType.startsWith('video/') || mimeType.startsWith('image/') || mimeType.startsWith('audio/')
+}
+
+export function MediaLibrary({ projectId, onClipAdded }: MediaLibraryProps) {
   const doc = useEditorStore((s) => s.doc)
   const dispatch = useEditorStore((s) => s.dispatch)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   function handleFiles(files: FileList | null) {
     if (!files) return
     for (const file of Array.from(files)) {
+      if (!isSupportedMimeType(file.type)) {
+        toast.error(`Unsupported file type: ${file.type || 'unknown'}`)
+        continue
+      }
       importMediaFile(projectId, file, dispatch)
         .then((assetId) => {
           const freshDoc = useEditorStore.getState().doc
           if (freshDoc) autoDetectProjectSettings(freshDoc, assetId, dispatch)
         })
         .catch((err: unknown) => {
-          console.error('Import failed', err)
+          const message = err instanceof Error ? err.message : String(err)
+          toast.error(`Failed to import ${file.name}: ${message}`)
         })
     }
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget === containerRef.current) {
+      setIsDragOver(false)
+    }
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    handleFiles(e.dataTransfer.files)
   }
 
   const assets = doc?.assets ?? []
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-border flex items-center justify-between border-b p-2">
+    <div
+      ref={containerRef}
+      className="flex h-full flex-col"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      data-drag-over={isDragOver}>
+      <div className={`border-border flex items-center justify-between border-b p-2 transition-colors ${isDragOver ? 'bg-primary/10' : ''}`}>
         <span className="text-muted-foreground text-xs font-medium">Media</span>
         <Button
           variant="ghost"
@@ -121,7 +161,7 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
         ) : (
           <ul className="flex flex-col gap-1">
             {assets.map((asset) => (
-              <AssetRow key={asset.id} projectId={projectId} asset={asset} />
+              <AssetRow key={asset.id} projectId={projectId} asset={asset} onClipAdded={onClipAdded} />
             ))}
           </ul>
         )}
@@ -130,11 +170,18 @@ export function MediaLibrary({ projectId }: MediaLibraryProps) {
   )
 }
 
-function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) {
+function AssetRow({ projectId, asset, onClipAdded }: { projectId: string; asset: AssetRef; onClipAdded?: () => void }) {
   const KindIcon = asset.kind === 'video' ? FilmIcon : asset.kind === 'audio' ? Music2Icon : ImageIcon
   const thumbnailUrl = useAssetThumbnail(projectId, asset)
   const doc = useEditorStore((s) => s.doc)
   const dispatch = useEditorStore((s) => s.dispatch)
+
+  function handleAddToTimeline() {
+    if (!doc) return
+    addAssetToTimeline(doc, asset, dispatch)
+    toast.success('Clip added')
+    onClipAdded?.()
+  }
 
   return (
     <li
@@ -161,7 +208,7 @@ function AssetRow({ projectId, asset }: { projectId: string; asset: AssetRef }) 
           size="icon-sm"
           aria-label="Add to timeline"
           data-add-to-timeline
-          onClick={() => doc && addAssetToTimeline(doc, asset, dispatch)}
+          onClick={handleAddToTimeline}
         >
           <PlusIcon className="size-3.5" />
         </Button>

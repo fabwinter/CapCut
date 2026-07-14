@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { CheckIcon, ChevronLeftIcon, FilmIcon, LoaderCircleIcon, RedoIcon, SettingsIcon, UndoIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Drawer, DrawerContent } from '#/components/ui/drawer'
 import { Input } from '#/components/ui/input'
@@ -14,6 +15,8 @@ import { deleteClip } from '#/editor/doc/commands/clips'
 import { renameProject } from '#/editor/doc/commands/project'
 import { projectDurationMicros } from '#/editor/doc/schema'
 import { frameDurationMicros } from '#/editor/doc/time'
+import { importMediaFile } from '#/editor/media/import'
+import { autoDetectProjectSettings } from '#/components/editor/MediaLibrary'
 import { useEditorStore } from '#/editor/state/editorStore'
 import { useIsMobile } from '#/hooks/use-mobile'
 import { loadProject } from '#/storage/idb'
@@ -50,7 +53,47 @@ function Editor() {
   const [exportOpen, setExportOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [mediaOpen, setMediaOpen] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
   const isMobile = useIsMobile()
+
+  function isSupportedMimeType(mimeType: string): boolean {
+    return mimeType.startsWith('video/') || mimeType.startsWith('image/') || mimeType.startsWith('audio/')
+  }
+
+  function handleEditorDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }
+
+  function handleEditorDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }
+
+  function handleEditorDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    const files = e.dataTransfer.files
+    if (!files || !doc) return
+    for (const file of Array.from(files)) {
+      if (!isSupportedMimeType(file.type)) {
+        toast.error(`Unsupported file type: ${file.type || 'unknown'}`)
+        continue
+      }
+      importMediaFile(projectId, file, dispatch)
+        .then((assetId) => {
+          const freshDoc = useEditorStore.getState().doc
+          if (freshDoc) autoDetectProjectSettings(freshDoc, assetId, dispatch)
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err)
+          toast.error(`Failed to import ${file.name}: ${message}`)
+        })
+    }
+  }
 
   // Desktop bonus (ARCHITECTURE §1: secondary on iPad, but cheap and expected on desktop browsers).
   useEffect(() => {
@@ -140,7 +183,12 @@ function Editor() {
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div
+      className="flex h-dvh flex-col overflow-hidden"
+      onDragOver={handleEditorDragOver}
+      onDragLeave={handleEditorDragLeave}
+      onDrop={handleEditorDrop}
+      data-drag-over={isDragOver}>
       <header className="border-border flex h-14 shrink-0 items-center gap-2 border-b px-3 [padding-top:env(safe-area-inset-top)]">
         <Button
           variant="ghost"
@@ -227,7 +275,7 @@ function Editor() {
       {isMobile && (
         <Drawer direction="left" open={mediaOpen} onOpenChange={setMediaOpen}>
           <DrawerContent className="h-full">
-            <MediaLibrary projectId={projectId} />
+            <MediaLibrary projectId={projectId} onClipAdded={() => setMediaOpen(false)} />
           </DrawerContent>
         </Drawer>
       )}

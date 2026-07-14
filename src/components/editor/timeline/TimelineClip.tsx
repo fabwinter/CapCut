@@ -42,6 +42,10 @@ export interface TimelineClipProps {
   onMoveCommit: (clipId: string, trackId: string, startMicros: Micros) => void
   onTrimStartCommit: (clipId: string, startMicros: Micros) => void
   onTrimEndCommit: (clipId: string, endMicros: Micros) => void
+  onKeyframeClick?: (micros: Micros) => void
+  onSplit?: (micros: Micros) => void
+  onDuplicate?: () => void
+  onDelete?: (ripple: boolean) => void
 }
 
 export function TimelineClip(props: TimelineClipProps) {
@@ -66,14 +70,27 @@ export function TimelineClip(props: TimelineClipProps) {
     onMoveCommit,
     onTrimStartCommit,
     onTrimEndCommit,
+    onKeyframeClick,
+    onSplit,
+    onDuplicate,
+    onDelete,
   } = props
 
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const movedRef = useRef(false)
+  const longPressTimerRef = useRef<number | undefined>(undefined)
   const thumbnails = useClipThumbnails(projectId, asset, clip)
   const waveform = useClipWaveformPeaks(projectId, asset, clip)
 
   const thresholdMicros = thresholdMicrosForPx(SNAP_THRESHOLD_PX, pxPerSecond)
+
+  function cancelLongPress() {
+    if (longPressTimerRef.current !== undefined) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = undefined
+    }
+  }
 
   function beginDrag(kind: DragKind, e: React.PointerEvent) {
     if (locked) return
@@ -91,11 +108,19 @@ export function TimelineClip(props: TimelineClipProps) {
       previewStartMicros: clip.startMicros,
       previewTrackId: clip.trackId,
     })
+    if (kind === 'move') {
+      longPressTimerRef.current = window.setTimeout(() => {
+        setContextMenu({ x: e.clientX, y: e.clientY })
+        longPressTimerRef.current = undefined
+      }, 500) as unknown as number
+    }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
     movedRef.current = true
+    cancelLongPress()
+    setContextMenu(null)
     const point = toContentPoint(e.clientX, e.clientY)
 
     if (drag.kind === 'move') {
@@ -128,6 +153,8 @@ export function TimelineClip(props: TimelineClipProps) {
 
   function endDrag(e: React.PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
+    cancelLongPress()
+    setContextMenu(null)
     if (!movedRef.current) {
       onSelect(clip.id)
     } else if (drag.kind === 'move') {
@@ -186,9 +213,34 @@ export function TimelineClip(props: TimelineClipProps) {
         </div>
       )}
       {waveform && waveform.length > 0 && <WaveformBars peaks={waveform} />}
-      <span className="relative truncate px-1.5 pt-0.5 text-[0.6875rem] font-medium text-white drop-shadow">
-        {clip.text?.content ?? asset?.originalName ?? 'Clip'}
-      </span>
+      {clip.keyframes.length > 0 && (
+        <div className="absolute inset-0 pointer-events-none">
+          {clip.keyframes.map((k) => {
+            const keyframeX = (k.atMicros / (clip.durationMicros / clip.speed)) * width
+            return (
+              <button
+                key={k.id}
+                type="button"
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 pointer-events-auto text-yellow-400 hover:text-yellow-300"
+                style={{ left: keyframeX }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onKeyframeClick?.(clip.startMicros + k.atMicros)
+                }}
+                aria-label={`Keyframe ${k.property}`}
+                title={`${k.property} @ ${(k.atMicros / 1_000_000).toFixed(2)}s`}
+              >
+                ◇
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {width >= 60 && (
+        <span className="relative truncate px-1.5 pt-0.5 text-[0.6875rem] font-medium text-white drop-shadow">
+          {clip.text?.content ?? asset?.originalName ?? 'Clip'}
+        </span>
+      )}
       {!locked && (
         <>
           <div
@@ -210,6 +262,51 @@ export function TimelineClip(props: TimelineClipProps) {
             style={{ width: HANDLE_WIDTH_PX, touchAction: 'none' }}
           />
         </>
+      )}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-card border border-border rounded-md shadow-lg min-w-48 overflow-hidden"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              const midMicros = clip.startMicros + clip.durationMicros / 2
+              onSplit?.(midMicros)
+              setContextMenu(null)
+            }}
+          >
+            ✂️ Split
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDuplicate?.()
+              setContextMenu(null)
+            }}
+          >
+            📋 Duplicate
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDelete?.(false)
+              setContextMenu(null)
+            }}
+          >
+            🗑️ Delete
+          </button>
+          <button
+            className="w-full px-3 py-2 text-left text-sm text-foreground hover:bg-accent/50 flex items-center gap-2"
+            onClick={() => {
+              onDelete?.(true)
+              setContextMenu(null)
+            }}
+          >
+            🗑️ Delete + Ripple
+          </button>
+        </div>
       )}
     </div>
   )

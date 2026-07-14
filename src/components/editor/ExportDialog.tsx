@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '#/components/ui/dialog'
 import { Progress } from '#/components/ui/progress'
@@ -51,6 +52,7 @@ export function ExportDialog({ open, onOpenChange, projectId, projectName, doc }
       const url = URL.createObjectURL(result.blob)
       setResultUrl(url)
       setState('done')
+      toast.success('Export complete')
 
       const file = new File([result.blob], `${projectName}.mp4`, { type: 'video/mp4' })
       if (navigator.canShare?.({ files: [file] })) {
@@ -65,7 +67,9 @@ export function ExportDialog({ open, onOpenChange, projectId, projectName, doc }
         setState('cancelled')
       } else {
         setState('error')
-        setError(err instanceof Error ? err.message : String(err))
+        const message = err instanceof Error ? err.message : String(err)
+        setError(message)
+        toast.error(`Export failed: ${message}`)
       }
     }
   }
