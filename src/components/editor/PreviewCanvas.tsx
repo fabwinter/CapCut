@@ -1,5 +1,5 @@
 import { PauseIcon, PlayIcon, RotateCcwIcon, Volume2Icon, VolumeXIcon, MaximizeIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { setClipTransform } from '#/editor/doc/commands/transform'
 import type { ProjectDoc, Transform } from '#/editor/doc/schema'
@@ -266,6 +266,17 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
   const duration = microsToSeconds(projectDurationMicros(doc))
   const current = microsToSeconds(playheadMicros)
 
+  const hasClipAtPlayhead = useMemo(() => {
+    for (const track of doc.tracks) {
+      for (const clip of track.clips) {
+        if (playheadMicros >= clip.startMicros && playheadMicros < clip.startMicros + clip.durationMicros) {
+          return true
+        }
+      }
+    }
+    return false
+  }, [doc.tracks, playheadMicros])
+
   return (
     <div
       ref={previewContainerRef}
@@ -321,9 +332,11 @@ export function PreviewCanvas({ projectId, doc }: PreviewCanvasProps) {
                 {renderError}
               </div>
             )}
-            {playheadMicros >= projectDurationMicros(doc) && (
+            {!hasClipAtPlayhead && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <div className="text-white/40 text-sm">End of project — 🔄 Rewind to continue</div>
+                <div className="text-white/30 text-xs">
+                  {doc.settings.width}×{doc.settings.height}
+                </div>
               </div>
             )}
           </div>

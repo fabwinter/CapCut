@@ -236,9 +236,11 @@ export function TimelineClip(props: TimelineClipProps) {
           })}
         </div>
       )}
-      <span className="relative truncate px-1.5 pt-0.5 text-[0.6875rem] font-medium text-white drop-shadow">
-        {clip.text?.content ?? asset?.originalName ?? 'Clip'}
-      </span>
+      {width >= 60 && (
+        <span className="relative truncate px-1.5 pt-0.5 text-[0.6875rem] font-medium text-white drop-shadow">
+          {clip.text?.content ?? asset?.originalName ?? 'Clip'}
+        </span>
+      )}
       {!locked && (
         <>
           <div
